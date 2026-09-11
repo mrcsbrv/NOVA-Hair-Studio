@@ -1,121 +1,324 @@
 <!DOCTYPE html>
 <html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>NOVA Hair Studio</title>
-
-    <link rel="stylesheet" href="styles.css">
-</head>
-
-<body>
-
-    <header>
-        <h1>NOVA Hair Studio</h1>
-
-        <nav>
-            <a href="#servicios">Servicios</a>
-            <a href="#equipo">Equipo</a>
-            <a href="#reservas">Reservar</a>
-            <a href="#contacto">Contacto</a>
-        </nav>
+  <head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"> <meta name="theme-color" content="#F4F4F2"> <meta name="description" content="NOVA Hair Studio: una peluquería ficticia con una experiencia de reserva interactiva. Descubre servicios, encuentra tu horario y prueba una reserva local."> <title>NOVA Hair Studio · Tu estilo, a tu manera</title> <link rel="stylesheet" href="styles.css"> </head>
+  <body>
+    <a class="skip-link" href="#contenido">Saltar al contenido</a>
+    <header class="site-header" id="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="#inicio" aria-label="NOVA Hair Studio, inicio"><span class="brand-name">NOVA<span class="brand-dot">.</span></span><span class="brand-subtitle">HAIR STUDIO</span></a>
+        <nav class="main-nav" aria-label="Navegación principal"> <a href="#inicio">Inicio</a><a href="#servicios">Servicios</a><a href="#equipo">Equipo</a><a href="#resenas">Reseñas</a><a href="#reservas">Reserva</a><a href="#contacto">Contacto</a> </nav>
+        <a class="btn btn-primary header-cta" href="#reservas">Reservar cita <span aria-hidden="true">↗</span></a>
+      </div>
     </header>
-
-    <main>
-
-        <section class="hero">
-            <h2>Tu estilo. Nuestra precisión.</h2>
-
-            <p>
-                Reserva tu cita de forma rápida y sencilla.
-            </p>
-
-            <a class="boton" href="#reservas">
-                Reservar cita
-            </a>
-        </section>
-
-
-        <section id="servicios">
-            <h2>Servicios</h2>
-
-            <div class="tarjetas">
-
-                <div class="tarjeta">
-                    <h3>Corte</h3>
-                    <p>30 minutos</p>
-                    <strong>18 €</strong>
-                </div>
-
-                <div class="tarjeta">
-                    <h3>Corte + Barba</h3>
-                    <p>45 minutos</p>
-                    <strong>25 €</strong>
-                </div>
-
-                <div class="tarjeta">
-                    <h3>Barba</h3>
-                    <p>20 minutos</p>
-                    <strong>12 €</strong>
-                </div>
-
+    <main id="contenido">
+      <section class="hero container" id="inicio" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="accent-line" aria-hidden="true"></span>NOVA Hair Studio · Madrid</p>
+          <h1 id="hero-title">Tu estilo,<br><span>a tu manera.</span></h1>
+          <p class="hero-description">Consulta nuestros servicios, encuentra tu horario y reserva en segundos.</p>
+          <div class="hero-actions"><a class="btn btn-primary" href="#reservas">Reservar cita <span aria-hidden="true">↗</span></a><a class="btn btn-secondary" href="#servicios">Ver servicios</a></div>
+          <div class="hero-footnote">
+            <span class="small-spark" aria-hidden="true">✳</span>
+            <p>Un corte. Un cambio. Un momento para ti.<br><span>Peluquería ficticia · Experiencia de demostración</span></p>
+          </div>
+        </div>
+        <!-- Reemplaza .salon-scene por una fotografía local con alt descriptivo. -->
+        <div class="hero-visual">
+          <div class="salon-scene" role="img" aria-label="Ilustración de un salón con espejos arqueados y sillones. Espacio reservado para una fotografía real."> <span class="scene-wordmark" aria-hidden="true">NOVA</span><span class="scene-light scene-light-one" aria-hidden="true"></span><span class="scene-light scene-light-two" aria-hidden="true"></span><span class="scene-mirror scene-mirror-one" aria-hidden="true"></span><span class="scene-mirror scene-mirror-two" aria-hidden="true"></span><span class="scene-shelf" aria-hidden="true"></span><span class="scene-bottle scene-bottle-one" aria-hidden="true"></span><span class="scene-bottle scene-bottle-two" aria-hidden="true"></span><span class="scene-chair scene-chair-one" aria-hidden="true"></span><span class="scene-chair scene-chair-two" aria-hidden="true"></span><span class="scene-plant" aria-hidden="true"></span><span class="scene-floor" aria-hidden="true"></span><span class="scene-caption">Espacio para la fotografía del salón</span> </div>
+          <div class="hero-visual-note">
+            <span aria-hidden="true">✦</span>
+            <div>El cuidado está en los detalles.<small>Tu próximo cambio empieza aquí.</small></div>
+          </div>
+          <span class="visual-index" aria-hidden="true">EL ESTUDIO / 01</span>
+        </div>
+      </section>
+      <div class="studio-strip">
+        <div class="container studio-strip-inner">
+          <p><span aria-hidden="true">01</span>Elige tu servicio</p>
+          <span class="strip-divider" aria-hidden="true"></span>
+          <p><span aria-hidden="true">02</span>Encuentra tu momento</p>
+          <span class="strip-divider" aria-hidden="true"></span>
+          <p><span aria-hidden="true">03</span>Nos vemos en NOVA</p>
+        </div>
+      </div>
+      <section class="section container" id="servicios" aria-labelledby="services-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">LA CARTA DE NOVA</p>
+            <h2 id="services-title">Un servicio para cada estilo.</h2>
+          </div>
+          <p>Desde tu corte de siempre hasta ese cambio que llevas tiempo imaginando. Precios claros, tiempo para ti.</p>
+        </div>
+        <div class="services-grid" id="services-grid"></div>
+        <p class="section-footnote">Precios y duraciones orientativos de demostración. Cada cabello merece su propio tiempo.</p>
+      </section>
+      <section class="team-section section" id="equipo" aria-labelledby="team-title">
+        <div class="container">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">MANOS EXPERTAS, TRATO CERCANO</p>
+              <h2 id="team-title">Conoce a tu equipo.</h2>
             </div>
-        </section>
-
-
-        <section id="equipo">
-            <h2>Nuestro equipo</h2>
-
-            <div class="tarjetas">
-
-                <div class="tarjeta">
-                    <h3>Carlos</h3>
-                    <p>Especialista en degradados</p>
+            <p>Tres estilos de trabajar. La misma idea: escucharte y encontrar lo que mejor va contigo.</p>
+          </div>
+          <div class="team-grid" id="team-grid"></div>
+          <p class="section-footnote">Profesionales ficticios de demostración. Fotografías pendientes de incorporar.</p>
+        </div>
+      </section>
+      <section class="section container reviews-section" id="resenas" aria-labelledby="reviews-title">
+        <div class="reviews-intro">
+          <p class="eyebrow">ASÍ PODRÍA SER TU EXPERIENCIA</p>
+          <h2 id="reviews-title">Pequeños cambios.<br>Buenas sensaciones.</h2>
+          <p>Una muestra de las historias que queremos crear en el estudio.</p>
+          <span class="badge">Reseñas ficticias · Datos de demostración</span>
+        </div>
+        <div class="review-carousel" role="region" aria-roledescription="carrusel" aria-label="Reseñas de demostración">
+          <div id="review-content" aria-live="off" aria-atomic="true"></div>
+          <div class="review-controls">
+            <div class="review-arrows"><button class="icon-button" id="review-prev" type="button" aria-label="Reseña anterior">←</button><button class="icon-button" id="review-next" type="button" aria-label="Reseña siguiente">→</button></div>
+            <div class="review-dots" id="review-dots" role="group" aria-label="Elegir reseña"></div>
+            <button class="btn btn-text btn-small" id="review-toggle" type="button" aria-pressed="false">Pausar</button>
+          </div>
+          <p class="sr-only" id="review-position" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+      <section class="booking-section section" id="reservas" aria-labelledby="booking-title">
+        <div class="container">
+          <div class="booking-heading">
+            <p class="eyebrow">HAZ HUECO PARA TI</p>
+            <h2 id="booking-title">Tu próxima cita, aquí.</h2>
+            <p>Elige lo que necesitas. Nosotros te mostramos cuándo.</p>
+          </div>
+          <div class="booking-card">
+            <ol class="booking-progress" id="booking-progress" aria-label="Progreso de la reserva">
+              <li data-step="selection" class="is-active" aria-current="step"><span>1</span>Servicio y hora</li>
+              <li data-step="details"><span>2</span>Tus datos</li>
+              <li data-step="review"><span>3</span>Confirmación</li>
+            </ol>
+            <p class="booking-status" id="booking-status" role="status" aria-live="polite"></p>
+            <div id="booking-selection">
+              <div class="service-selection">
+                <div class="form-field">
+                  <label for="service-select">¿Qué te apetece hacer?</label>
+                  <select id="service-select" name="service" aria-describedby="service-help"><option value="">Elige un servicio</option></select>
+                  <p class="field-hint" id="service-help">Los horarios se adaptan a la duración de tu servicio.</p>
                 </div>
-
-                <div class="tarjeta">
-                    <h3>David</h3>
-                    <p>Corte clásico y barba</p>
+                <div class="single-professional" id="single-professional"></div>
+              </div>
+              <fieldset class="professional-field" id="professional-field" hidden>
+                <legend>¿Con quién?</legend>
+                <div class="professional-options" id="professional-options"></div>
+              </fieldset>
+              <div class="availability-layout">
+                <div class="calendar-panel">
+                  <div class="subsection-title">
+                    <span class="eyebrow">EL DÍA</span>
+                    <h3>Encuentra tu momento</h3>
+                  </div>
+                  <div class="calendar-header">
+                    <button class="icon-button" id="calendar-prev" type="button" aria-label="Mes anterior" disabled>←</button>
+                    <h4 id="calendar-label" aria-live="polite">Calendario</h4>
+                    <button class="icon-button" id="calendar-next" type="button" aria-label="Mes siguiente">→</button>
+                  </div>
+                  <div class="calendar-weekdays" aria-hidden="true"><span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
+                  <div class="calendar-grid" id="calendar-grid" role="group" aria-label="Elegir día de la cita"></div>
+                  <div class="calendar-legend" aria-label="Leyenda del calendario"><span><i class="legend-dot available-dot" aria-hidden="true"></i>Disponible</span><span><i class="legend-dot full-dot" aria-hidden="true"></i>Completo</span><span><i class="legend-dot closed-dot" aria-hidden="true"></i>Cerrado</span></div>
+                  <p class="day-status" id="day-status" role="status" aria-live="polite">Elige un servicio para consultar la disponibilidad.</p>
                 </div>
-
+                <div class="slots-panel">
+                  <div class="subsection-title">
+                    <span class="eyebrow">LA HORA</span>
+                    <h3 id="slots-title">Horarios disponibles</h3>
+                  </div>
+                  <p class="field-hint">Cada hueco incluye todo el tiempo que necesita tu servicio.</p>
+                  <div class="slots-grid" id="slots-grid">
+                    <p class="empty-state">Selecciona un servicio y un día para ver las horas.</p>
+                  </div>
+                </div>
+              </div>
             </div>
-        </section>
-
-
-        <section id="reservas">
-            <h2>Reserva tu cita</h2>
-
-            <p>
-                Próximamente podrás elegir servicio,
-                profesional, día y hora.
-            </p>
-
-            <button id="botonReserva">
-                Probar reserva
-            </button>
-
-            <p id="mensaje"></p>
-        </section>
-
-
-        <section id="contacto">
-            <h2>Encuéntranos</h2>
-
-            <p>Calle Ejemplo 23, Madrid</p>
-            <p>Lunes a viernes: 09:00 - 20:00</p>
-            <p>Sábados: 09:00 - 14:00</p>
-        </section>
-
+            <form class="customer-form" id="customer-form" hidden novalidate>
+              <div class="form-heading">
+                <p class="eyebrow">YA CASI ESTÁ</p>
+                <h3>Unos datos y es tuya.</h3>
+                <p id="selected-appointment"></p>
+              </div>
+              <div class="customer-fields">
+                <div class="form-field">
+                  <label for="customer-name">Nombre</label>
+                  <input id="customer-name" name="name" type="text" autocomplete="name" placeholder="Tu nombre y apellidos" minlength="2" maxlength="80" required aria-describedby="error-name">
+                  <p class="field-error" id="error-name"></p>
+                </div>
+                <div class="form-field">
+                  <label for="customer-phone">Teléfono</label>
+                  <input id="customer-phone" name="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="612 345 678" maxlength="24" required aria-describedby="error-phone">
+                  <p class="field-error" id="error-phone"></p>
+                </div>
+                <div class="form-field">
+                  <label for="customer-email">Email</label>
+                  <input id="customer-email" name="email" type="email" autocomplete="email" inputmode="email" placeholder="tu@email.es" maxlength="160" required aria-describedby="error-email">
+                  <p class="field-error" id="error-email"></p>
+                </div>
+              </div>
+              <p class="form-privacy">Prueba con datos ficticios. En esta demo se guardan únicamente en este navegador; puedes borrarlos desde las herramientas de demostración.</p>
+              <div class="form-actions"><button class="btn btn-primary" type="submit">Revisar mi reserva <span aria-hidden="true">→</span></button><button class="btn btn-text" id="back-to-selection" type="button">Cambiar servicio u hora</button></div>
+            </form>
+            <div class="booking-review" id="booking-review" hidden>
+              <div class="form-heading">
+                <p class="eyebrow">TODO A TU GUSTO</p>
+                <h3 tabindex="-1">Tu reserva</h3>
+                <p>Comprueba los detalles antes de confirmar.</p>
+              </div>
+              <div id="review-summary"></div>
+              <p class="field-hint">Tu cita se guardará al pulsar «Confirmar reserva».</p>
+              <div class="form-actions"><button class="btn btn-primary" id="confirm-booking" type="button">Confirmar reserva <span aria-hidden="true">✓</span></button><button class="btn btn-secondary" id="modify-booking" type="button">Modificar</button></div>
+            </div>
+            <div class="booking-success" id="booking-success" hidden>
+              <span class="success-mark" aria-hidden="true">✓</span>
+              <p class="eyebrow">NOS VEMOS EN NOVA</p>
+              <h3 tabindex="-1" id="success-title">Tu cita está confirmada</h3>
+              <div id="success-summary"></div>
+              <p id="success-email"></p>
+              <p class="demo-email-note">Modo demo: el envío de correo se conectará en la siguiente fase.</p>
+              <button class="btn btn-primary" id="new-booking" type="button">Reservar otra cita</button>
+            </div>
+          </div>
+          <div class="phone-reservation">
+            <div>
+              <h3>¿Prefieres reservar hablando con nosotros?</h3>
+              <p>Las citas telefónicas también se añadirían a la agenda para evitar dobles reservas. Puedes probarlo en las herramientas de demostración.</p>
+            </div>
+            <a class="btn btn-secondary" href="tel:+34910000000"><span aria-hidden="true">↗</span>Llamar para reservar</a>
+          </div>
+          <p class="booking-demo-note">Demo local · Las reservas se conservan en este navegador y no se comparten con otros dispositivos. Teléfono ficticio: 910 000 000.</p>
+        </div>
+      </section>
+      <section class="section container" id="galeria" aria-labelledby="gallery-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">INSPIRACIÓN PARA TU PRÓXIMO CAMBIO</p>
+            <h2 id="gallery-title">El estilo está en los detalles.</h2>
+          </div>
+          <p>Color, textura y cortes con personalidad. Una galería preparada para incorporar nuestros futuros trabajos.</p>
+        </div>
+        <div class="gallery-grid" id="gallery-grid"></div>
+        <p class="section-footnote">Referencias visuales de demostración. Los espacios de imagen se sustituirán por fotografías reales.</p>
+      </section>
+      <section class="contact-section section" id="contacto" aria-labelledby="contact-title">
+        <div class="container contact-layout">
+          <div class="contact-intro">
+            <p class="eyebrow">ESTAMOS PARA AYUDARTE</p>
+            <h2 id="contact-title">¿Tienes alguna duda?</h2>
+            <p>Un buen resultado empieza por entender lo que necesitas. Aquí tienes algunas respuestas.</p>
+            <div class="contact-links"><a href="tel:+34910000000" data-business-phone>910 000 000</a><a href="mailto:hola@nova.example" data-business-email>hola@nova.example</a></div>
+            <p class="field-hint">Teléfono y correo ficticios de demostración.</p>
+            <div class="contact-actions"><a class="btn btn-primary" href="tel:+34910000000">Llamar <span aria-hidden="true">↗</span></a><a class="btn btn-secondary" href="mailto:hola@nova.example">Enviar correo</a></div>
+          </div>
+          <div class="faq-list">
+            <details class="faq-item">
+              <summary>¿Cuánto dura mi cita?</summary>
+              <p>Cada servicio indica su duración aproximada. Al reservar apartamos todo ese tiempo para ti; el acabado final puede variar según tu cabello.</p>
+            </details>
+            <details class="faq-item">
+              <summary>¿Puedo cancelar una reserva?</summary>
+              <p>Sí. En esta demo puedes cancelar tus citas desde «Herramientas de demostración», al final de la página. El horario volverá a estar disponible de inmediato.</p>
+            </details>
+            <details class="faq-item">
+              <summary>¿Puedo reservar por teléfono?</summary>
+              <p>La web está preparada para ello. El número mostrado es ficticio; para probar una reserva telefónica usa las herramientas de demostración. La cita bloqueará el horario igual que una reserva web.</p>
+            </details>
+            <details class="faq-item">
+              <summary>¿Qué ocurre si llego tarde?</summary>
+              <p>En un salón real te pediríamos que avisaras cuanto antes. Revisaríamos el tiempo disponible contigo para cuidar tu servicio y respetar la siguiente cita.</p>
+            </details>
+            <details class="faq-item">
+              <summary>¿Cómo sé qué servicio elegir?</summary>
+              <p>Consulta la descripción y «Ver ejemplos» de cada servicio. Si dudas entre dos opciones, el equipo de un salón real podría orientarte antes de reservar.</p>
+            </details>
+          </div>
+        </div>
+      </section>
+      <section class="section container location-section" id="ubicacion" aria-labelledby="location-title">
+        <div class="location-copy">
+          <p class="eyebrow">TU NUEVO RINCÓN FAVORITO</p>
+          <h2 id="location-title">Te esperamos en NOVA.</h2>
+          <address><strong data-business-name>NOVA Hair Studio</strong><br><span data-business-address>Calle Ejemplo 23, Madrid</span><br><span class="address-demo-note">Dirección ficticia de demostración</span></address>
+          <dl class="opening-hours" id="business-hours">
+            <div>
+              <dt>Lunes–viernes</dt>
+              <dd>09:00–20:00</dd>
+            </div>
+            <div>
+              <dt>Sábado</dt>
+              <dd>09:00–14:00</dd>
+            </div>
+            <div>
+              <dt>Domingo</dt>
+              <dd>Cerrado</dd>
+            </div>
+          </dl>
+          <button class="btn btn-secondary" id="directions-button" type="button">Cómo llegar <span aria-hidden="true">↗</span></button>
+        </div>
+        <!-- Sustituye .map-placeholder por el mapa de una ubicación real en la siguiente fase. -->
+        <div class="map-placeholder" role="img" aria-label="Ilustración de mapa. La dirección del salón es ficticia; no representa una ubicación real.">
+          <span class="map-block map-block-one" aria-hidden="true"></span>
+          <span class="map-block map-block-two" aria-hidden="true"></span>
+          <span class="map-block map-block-three" aria-hidden="true"></span>
+          <span class="map-river" aria-hidden="true"></span>
+          <div class="map-pin"><span aria-hidden="true">N.</span><strong data-business-name>NOVA Hair Studio</strong><small>Mapa de demostración</small></div>
+          <span class="map-caption">Espacio preparado para un mapa real</span>
+        </div>
+      </section>
+      <section class="demo-section container" aria-label="Agenda y herramientas de demostración">
+        <details class="demo-tools" id="demo-tools">
+          <summary><span>Herramientas de demostración</span><span class="demo-summary-note">Agenda local</span></summary>
+          <div class="demo-content">
+            <div class="section-heading demo-heading">
+              <div>
+                <p class="eyebrow">SOLO PARA PROBAR</p>
+                <h2>Agenda demo</h2>
+              </div>
+              <p>Consulta y cancela citas, o añade una reserva telefónica. Cada cambio actualiza los horarios públicos de este navegador.</p>
+            </div>
+            <p class="demo-info">Este panel es público y local; todavía no es una agenda privada de producción. Usa datos ficticios. Al restaurar la demo se borrarán las citas actuales de este navegador.</p>
+            <div class="demo-actions"><button class="btn btn-primary btn-small" id="toggle-phone-form" type="button" aria-expanded="false" aria-controls="phone-form">Añadir cita telefónica</button><button class="btn btn-secondary btn-small" id="reset-demo" type="button">Restaurar datos demo</button></div>
+            <p id="demo-status" role="status" aria-live="polite"></p>
+            <form class="phone-form" id="phone-form" hidden novalidate>
+              <h3>Nueva cita telefónica demo</h3>
+              <div class="phone-fields">
+                <div class="form-field"><label for="phone-service">Servicio</label><select id="phone-service" aria-describedby="phone-errors" name="service" required><option value="">Elige un servicio</option></select></div>
+                <div class="form-field"><label for="phone-professional">Profesional</label><select id="phone-professional" aria-describedby="phone-errors" name="professional" required><option value="">Elige un profesional</option></select></div>
+                <div class="form-field"><label for="phone-date">Fecha</label><input id="phone-date" aria-describedby="phone-errors" name="date" type="date" max="9999-12-31" required></div>
+                <div class="form-field"><label for="phone-time">Hora disponible</label><select id="phone-time" aria-describedby="phone-errors" name="time" required><option value="">Elige un día</option></select></div>
+                <div class="form-field"><label for="phone-name">Nombre</label><input id="phone-name" aria-describedby="phone-errors" name="name" type="text" autocomplete="name" maxlength="80" required placeholder="Nombre de prueba"></div>
+                <div class="form-field"><label for="phone-number">Teléfono</label><input id="phone-number" aria-describedby="phone-errors" name="phone" type="tel" autocomplete="tel" maxlength="24" required placeholder="612 345 678"></div>
+                <div class="form-field"><label for="phone-email">Email</label><input id="phone-email" aria-describedby="phone-errors" name="email" type="email" autocomplete="email" maxlength="160" required placeholder="cliente@example.com"></div>
+              </div>
+              <p class="field-error" id="phone-errors" role="alert"></p>
+              <div class="form-actions"><button class="btn btn-primary btn-small" type="submit">Añadir cita telefónica</button><button class="btn btn-text btn-small" id="close-phone-form" type="button">Cerrar formulario</button></div>
+            </form>
+            <div class="agenda-list" id="agenda-list"></div>
+          </div>
+        </details>
+      </section>
     </main>
-
-
-    <footer>
-        <p>© 2026 NOVA Hair Studio</p>
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <a class="brand footer-brand" href="#inicio" aria-label="NOVA Hair Studio, volver al inicio"><span class="brand-name">NOVA<span class="brand-dot">.</span></span><span class="brand-subtitle">HAIR STUDIO</span></a>
+        <p>Tu estilo, a tu manera.<br><span>NOVA Hair Studio es una peluquería ficticia. Datos y reseñas de demostración.</span></p>
+        <a class="footer-top" href="#inicio">Volver arriba <span aria-hidden="true">↑</span></a>
+      </div>
     </footer>
-
-
+    <div class="mobile-booking-bar"><span>NOVA Hair Studio<small>Un momento para ti.</small></span><a class="btn btn-primary" href="#reservas">Reservar cita <span aria-hidden="true">↗</span></a></div>
+    <dialog class="example-dialog" id="example-dialog" aria-labelledby="dialog-title">
+      <button class="icon-button dialog-close" id="close-dialog" type="button" aria-label="Cerrar ventana">×</button>
+      <div id="dialog-content"></div>
+    </dialog>
+    <noscript>
+      <div class="noscript-message">Activa JavaScript para consultar servicios, disponibilidad y probar las reservas de esta demostración.</div>
+    </noscript>
+    <script src="data.js"></script>
+    <script src="booking-core.js"></script>
     <script src="script.js"></script>
-
-</body>
+  </body>
 </html>
