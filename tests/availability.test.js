@@ -9,16 +9,18 @@
   var output = typeof print === 'function' ? print : console.log.bind(console);
   if (typeof load === 'function') {
     load('data.js');
+    load('salon-time.js');
     load('booking-core.js');
   } else if (typeof require === 'function') {
     require('../data.js');
+    require('../salon-time.js');
     require('../booking-core.js');
   }
   var core = globalThis.NovaCore;
   var data = globalThis.NovaData;
   var tests = [];
-  var fixedNow = new Date(2030, 0, 7, 8, 0, 0); // Lunes; el motor usa la hora local.
-  var monday = core.toDateKey(fixedNow);
+  var fixedNow = new Date('2030-01-07T08:00:00+01:00'); // Lunes, hora del salón en Madrid.
+  var monday = globalThis.NovaTime.dateKey(fixedNow);
   var tuesday = '2030-01-08';
   var customer = { name: 'María Pérez', phone: '+34 612 345 678', email: 'maria@example.com' };
 
@@ -124,12 +126,12 @@
   });
   test('Se excluyen días anteriores y horas que ya han empezado hoy', function () {
     equal(availability('corte-caballero', [], { date: '2030-01-05' }).status, 'past');
-    var result = availability('corte-caballero', [], { now: new Date(2030, 0, 7, 10, 15) });
+    var result = availability('corte-caballero', [], { now: new Date('2030-01-07T10:15:00+01:00') });
     assert(!hasSlot(result, 600));
     assert(hasSlot(result, 630));
-    var elapsed = availability('corte-caballero', [], { now: new Date(2030, 0, 7, 9, 0, 1) });
+    var elapsed = availability('corte-caballero', [], { now: new Date('2030-01-07T09:00:01+01:00') });
     assert(!hasSlot(elapsed, 540));
-    equal(availability('corte-caballero', [], { now: new Date(2030, 0, 7, 20, 0) }).status, 'full');
+    equal(availability('corte-caballero', [], { now: new Date('2030-01-07T20:00:00+01:00') }).status, 'full');
   });
   test('Cualquiera disponible combina profesionales compatibles y conserva la asignación', function () {
     var result = availability('corte-mujer', [{ date: monday, professionalId: 'laura', start: 540, end: 600 }]);
@@ -271,7 +273,7 @@
     var now = new Date(fixedNow);
     var repo = repository(null, { now: function () { return new Date(now); } });
     assert(hasSlot(availability('corte-caballero'), 540));
-    now = new Date(2030, 0, 7, 9, 0, 1);
+    now = new Date('2030-01-07T09:00:01+01:00');
     await rejectsCode(function () { return repo.createBooking(input()); }, 'SLOT_UNAVAILABLE');
     equal((await repo.listBookings()).length, 0);
   });
@@ -290,14 +292,14 @@
   });
   test('Semillas desde viernes, sábado y domingo respetan jornadas y duraciones', async function () {
     for (var day = 11; day <= 13; day += 1) {
-      var now = new Date(2030, 0, day, 18);
+      var now = new Date('2030-01-' + String(day).padStart(2, '0') + 'T18:00:00+01:00');
       var repo = repository(memoryStorage(false), { now: function () { return new Date(now); } });
       var initial = await repo.listBookings();
       equal((await repo.listBookings()).length, initial.length); // Valida también la lectura del documento guardado.
       assert(initial.every(function (booking) {
         var date = core.parseDateKey(booking.date);
         var hours = data.business.hours[date.getDay()];
-        return booking.date > core.toDateKey(now) && hours && booking.start >= hours.start && booking.end <= hours.end;
+        return booking.date > globalThis.NovaTime.dateKey(now) && hours && booking.start >= hours.start && booking.end <= hours.end;
       }));
       var fullDate = initial.map(function (booking) { return booking.date; }).sort().pop();
       data.services.forEach(function (service) {

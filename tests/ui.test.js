@@ -5,7 +5,10 @@
 "use strict";
 load("tests/dom-lite.js");
 load("data.js");
+load("salon-time.js");
 load("booking-core.js");
+load("supabase-config.js");
+load("supabase-repository.js");
 load("script.js");
 drainMicrotasks();
 
@@ -49,7 +52,7 @@ function showDate(key) {
   click('[data-date="' + key + '"]');
 }
 function slotSelector(start, professional = "carlos") { return '[data-slot="' + start + '"][data-professional="' + professional + '"]'; }
-const date = new Date();
+const date = NovaCore.parseDateKey(NovaTime.dateKey(new Date()));
 date.setDate(date.getDate() + 10);
 while (!NovaData.business.hours[date.getDay()]) date.setDate(date.getDate() + 1);
 const dateKey = NovaCore.toDateKey(date);
@@ -58,6 +61,8 @@ let chosenStart;
 let newId;
 
 test("La aplicación arranca, renderiza 10 servicios y 3 profesionales", () => {
+  assert(NovaStorage.createRepository().mode === "local", "Los placeholders deben mantener el modo demo local sin necesitar el CDN");
+  assert($test("#storage-mode-note").textContent.includes("Configuración Supabase pendiente"), "No se distingue el modo demo con configuración pendiente");
   assert(all("#services-grid [data-book-service]").length === 10, "Servicios incompletos");
   assert(all("#team-grid .team-card").length === 3, "Equipo incompleto");
   assert(!$test("#booking-status").textContent.includes("No se pudo iniciar"), "Error al iniciar la interfaz");

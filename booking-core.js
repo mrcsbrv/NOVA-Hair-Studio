@@ -3,6 +3,7 @@
   'use strict';
 
   var data = global.NovaData;
+  var salonTime = global.NovaTime;
   var STORAGE_KEY = 'nova-hair-studio.bookings.v1';
   var LOCK_NAME = 'nova-hair-studio:bookings';
   var VERSION = 1;
@@ -58,7 +59,8 @@
     if (professionals.some(function (id) { return service.professionals.indexOf(id) === -1; })) {
       throw bookingError('VALIDATION_ERROR', 'Ese profesional no realiza el servicio seleccionado.');
     }
-    if (options.date < toDateKey(now)) return { status: 'past', slots: [], unavailable: [] };
+    var today = salonTime.dateKey(now);
+    if (options.date < today) return { status: 'past', slots: [], unavailable: [] };
     var hours = data.business.hours[date.getDay()];
     if (!hours) return { status: 'closed', slots: [], unavailable: [] };
 
@@ -67,9 +69,8 @@
     var dayBookings = bookings.filter(function (booking) { return booking.date === options.date; });
     for (var start = hours.start; start < hours.end; start += data.business.slotInterval) {
       var end = start + service.duration;
-      var appointmentDate = new Date(date.getTime());
-      appointmentDate.setMinutes(start);
-      if (appointmentDate.getTime() < now.getTime()) {
+      // Solo hoy necesita comparar instantes; los días futuros son fechas civiles de Madrid.
+      if (options.date === today && salonTime.toInstant(options.date, start).getTime() < now.getTime()) {
         unavailable.push({ start: start, reason: 'Hora pasada' });
         continue;
       }
@@ -151,8 +152,7 @@
 
   function createDemoBookings(now) {
     var dates = [];
-    var cursor = new Date(now.getTime());
-    cursor.setHours(0, 0, 0, 0);
+    var cursor = parseDateKey(salonTime.dateKey(now));
     while (dates.length < 3) {
       cursor.setDate(cursor.getDate() + 1);
       if (data.business.hours[cursor.getDay()]) dates.push(toDateKey(cursor));
@@ -193,9 +193,9 @@
   }
 
   /*
-   * Único punto de persistencia. Un futuro adaptador Supabase debe conservar:
-   * listBookings, createBooking, cancelBooking, resetDemo y subscribe.
-   * La comprobación de solapamientos deberá ser atómica en el servidor/base de datos.
+   * Adaptador local explícito para demostración, elegido por la configuración de la aplicación.
+   * El adaptador remoto implementa su propio almacenamiento y control atómico de conflictos.
+   * No se utiliza esta agenda como alternativa silenciosa ante un fallo del servidor.
    * Nunca se reemplaza un fallo de localStorage por una persistencia ficticia en memoria.
    */
   function createRepository(options) {
@@ -275,7 +275,7 @@
     function notify() {
       listeners.forEach(function (listener) {
         try { listener(); }
-        catch (error) { if (global.console) global.console.error('No se pudo actualizar una vista de la agenda.', error); }
+        catch (error) { if (global.console) global.console.error('No se pudo actualizar una vista de la agenda.'); }
       });
     }
 
@@ -376,6 +376,7 @@
     }
 
     return {
+      mode: 'local',
       listBookings: listBookings, createBooking: createBooking, cancelBooking: cancelBooking,
       resetDemo: resetDemo, subscribe: subscribe
     };

@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent.parent
+SUPABASE_CDN = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"
 
 
 class Document(HTMLParser):
@@ -80,11 +81,25 @@ def run():
             resource = attrs.get("src")
         if resource:
             parsed = urlparse(resource)
-            check(not parsed.scheme and not parsed.netloc, f"{prefix}: dependencia externa {resource}")
+            allowed_cdn = tag == "script" and resource == SUPABASE_CDN
+            check(allowed_cdn or (not parsed.scheme and not parsed.netloc), f"{prefix}: dependencia externa no permitida {resource}")
             if not parsed.scheme and not parsed.netloc:
                 check((ROOT / unquote(parsed.path)).is_file(), f"{prefix}: no existe {resource}")
 
     check("script.js" in script_sources, "script.js no está enlazado")
+    for source in ("data.js", "salon-time.js", "booking-core.js", "supabase-config.js", "supabase-repository.js", SUPABASE_CDN):
+        check(script_sources.count(source) == 1, f"{source} debe estar enlazado exactamente una vez")
+    dependencies = {
+        "booking-core.js": ("data.js", "salon-time.js"),
+        "supabase-repository.js": ("booking-core.js", "supabase-config.js", SUPABASE_CDN),
+        "script.js": ("supabase-repository.js",),
+    }
+    for source, prerequisites in dependencies.items():
+        for prerequisite in prerequisites:
+            check(source in script_sources and prerequisite in script_sources and script_sources.index(prerequisite) < script_sources.index(source), f"Orden incorrecto: {prerequisite} debe cargarse antes de {source}")
+    for tag, attrs, line in elements:
+        if tag == "script" and attrs.get("src") in script_sources:
+            check("async" not in attrs, f"index.html:{line}: async no garantiza el orden de los scripts")
     check(any(tag == "link" and attrs.get("href") == "styles.css" for tag, attrs, _ in elements), "styles.css no está enlazado")
     # Errores tipográficos frecuentes que causarían null al arrancar.
     explicit_ids = re.findall(r"getElementById\(\s*['\"]([\w-]+)['\"]\s*\)", script)

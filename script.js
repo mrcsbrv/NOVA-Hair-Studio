@@ -1,10 +1,12 @@
-/* NOVA · Interfaz. La agenda se consulta exclusivamente mediante el repositorio.
-   Para conectar Supabase se sustituye el adaptador, sin cambiar las vistas. */
+/* NOVA · La interfaz trabaja con intervalos públicos del repositorio seleccionado.
+   Los datos de la propia confirmación solo permanecen en memoria en modo Supabase. */
 (function () {
   'use strict';
   const data = window.NovaData;
   const core = window.NovaCore;
-  const repository = core.createRepository();
+  const time = window.NovaTime;
+  const repository = window.NovaStorage.createRepository();
+  const remote = repository.mode === 'supabase';
   const $ = (id) => document.getElementById(id);
   const escapeHTML = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -16,15 +18,16 @@
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
   });
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const today = () => core.toDateKey(new Date());
+  const today = () => time.dateKey(new Date());
   const firstOfMonth = () => {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1);
+    const now = time.parts(new Date());
+    return new Date(now.year, now.month - 1, 1);
   };
   const state = {
     bookings: [], serviceId: '', professionalId: 'any', date: '', slot: null,
     month: firstOfMonth(), stage: 'selection', customer: null, confirmed: null,
-    busy: false, storageReady: false
+    busy: false, storageReady: false, loading: false, requestId: 0,
+    availabilityError: false, uncertain: false
   };
   const serviceById = (id) => data.services.find((service) => service.id === id);
   const professionalById = (id) => data.professionals.find((person) => person.id === id);
@@ -37,6 +40,29 @@
   function announce(message, target = 'booking-status', error = false) {
     $(target).textContent = message;
     $(target).classList.toggle('is-error', error);
+  }
+  function renderStorageMode() {
+    $('demo-section').hidden = remote;
+    $('storage-mode-note').textContent = remote
+      ? 'Agenda compartida con Supabase · Todas las horas corresponden al salón: Europe/Madrid. La web pública solo consulta intervalos ocupados.'
+      : 'Configuración Supabase pendiente · Modo demo local: las reservas solo se guardan en este navegador. Horario del salón: Europe/Madrid.';
+    if (remote) {
+      $('customer-privacy').textContent = 'Estos datos se envían al salón para gestionar tu cita. No se guardan en el almacenamiento local de este navegador. Esta peluquería es ficticia: utiliza datos de prueba.';
+      $('phone-reservation-note').textContent = 'Las reservas telefónicas deben registrarse en la misma agenda del salón para evitar dobles reservas. Su gestión estará disponible en el futuro panel privado.';
+      $('faq-cancellation').textContent = 'La cancelación de reservas compartidas se gestionará desde el futuro panel privado del salón. Esta web pública no permite cancelar citas de Supabase.';
+      $('faq-phone').textContent = 'El salón podrá atender reservas telefónicas y añadirlas desde su futuro panel privado. El número de esta peluquería ficticia es de demostración.';
+      $('agenda-list').innerHTML = '';
+    }
+  }
+  function updateAvailabilityControls() {
+    const blocked = !state.storageReady || state.loading || state.busy || state.uncertain;
+    $('confirm-booking').disabled = blocked;
+    $('modify-booking').disabled = state.busy;
+    $('customer-form').querySelector('[type="submit"]').disabled = blocked;
+    $('retry-availability').hidden = !state.availabilityError && !state.uncertain;
+    $('retry-availability').disabled = state.loading || state.busy;
+    $('booking-uncertain-note').hidden = !state.uncertain;
+    $('booking-selection').setAttribute('aria-busy', String(state.loading));
   }
   function focusElement(element, scroll = true) {
     if (!element) return;
@@ -139,6 +165,7 @@
     $('customer-form').hidden = state.stage !== 'selection' || !state.slot;
     $('booking-review').hidden = state.stage !== 'review';
     $('booking-success').hidden = state.stage !== 'success';
+    updateAvailabilityControls();
   }
   function selectService(id, navigate = false) {
     if (state.busy) return;
@@ -161,6 +188,7 @@
       }
       focusElement($('service-select'));
     }
+    if (remote) refreshData(true);
   }
   function renderCalendar() {
     const minimumMonth = firstOfMonth();
@@ -175,17 +203,17 @@
     let html = '<span class="calendar-empty" aria-hidden="true"></span>'.repeat(offset);
     for (let day = 1; day <= days; day += 1) {
       const key = core.toDateKey(new Date(year, month, day));
-      const status = key < today() ? 'past' : state.serviceId ? availability(key).status : 'pending';
-      const disabled = status === 'past' || !state.serviceId || !state.storageReady;
-      const label = labels[status] || 'Elige primero un servicio';
+      const status = key < today() ? 'past' : state.serviceId && state.storageReady && !state.loading ? availability(key).status : 'pending';
+      const disabled = status === 'past' || !state.serviceId || !state.storageReady || state.loading || state.busy || state.uncertain;
+      const label = labels[status] || (state.loading ? 'Cargando disponibilidad' : !state.storageReady ? 'Disponibilidad pendiente' : 'Elige primero un servicio');
       html += `<button type="button" class="calendar-day is-${status}${key === today() ? ' is-today' : ''}${key === state.date ? ' is-selected' : ''}" data-date="${key}" ${disabled ? 'disabled' : ''} ${['closed', 'full'].includes(status) ? 'aria-disabled="true"' : ''} aria-pressed="${key === state.date}" ${key === today() ? 'aria-current="date"' : ''} aria-label="${escapeHTML(dateLabel(key))}. ${label}" title="${label}"><span>${day}</span><i aria-hidden="true"></i></button>`;
     }
     $('calendar-grid').innerHTML = html;
   }
   function renderSlots() {
     $('slots-title').textContent = state.date ? `Horarios · ${core.parseDateKey(state.date).toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })}` : 'Tu próximo hueco';
-    if (!state.storageReady || !state.serviceId || !state.date) {
-      $('slots-grid').innerHTML = `<p class="empty-state">${!state.storageReady ? 'La agenda todavía no está disponible.' : !state.serviceId ? 'Empieza eligiendo el servicio que te apetece.' : 'Selecciona un día en el calendario para ver las horas.'}</p>`;
+    if (state.loading || !state.storageReady || !state.serviceId || !state.date) {
+      $('slots-grid').innerHTML = `<p class="empty-state">${state.loading ? 'Cargando disponibilidad…' : !state.storageReady ? 'La agenda todavía no está disponible.' : !state.serviceId ? 'Empieza eligiendo el servicio que te apetece.' : 'Selecciona un día en el calendario para ver las horas.'}</p>`;
       $('day-status').textContent = '';
       return;
     }
@@ -210,10 +238,11 @@
       if (!slot.available) return `<button type="button" class="slot-button is-unavailable" disabled title="${escapeHTML(slot.reason || 'Sin disponibilidad para este servicio')}"><span class="slot-time">${core.timeLabel(slot.start)}</span><span class="slot-professional">No disponible</span></button>`;
       const person = professionalById(slot.professionalId);
       const selected = state.slot && state.slot.start === slot.start && state.slot.professionalId === slot.professionalId;
-      return `<button type="button" class="slot-button${selected ? ' is-selected' : ''}" data-slot="${slot.start}" data-professional="${slot.professionalId}" aria-pressed="${Boolean(selected)}" aria-label="${core.timeLabel(slot.start)}, con ${escapeHTML(person.name)}, hasta las ${core.timeLabel(slot.end)}"><span class="slot-time">${core.timeLabel(slot.start)}</span><span class="slot-professional">${escapeHTML(person.name)}</span></button>`;
+      return `<button type="button" class="slot-button${selected ? ' is-selected' : ''}" ${state.busy || state.uncertain ? 'disabled' : ''} data-slot="${slot.start}" data-professional="${slot.professionalId}" aria-pressed="${Boolean(selected)}" aria-label="${core.timeLabel(slot.start)}, con ${escapeHTML(person.name)}, hasta las ${core.timeLabel(slot.end)}"><span class="slot-time">${core.timeLabel(slot.start)}</span><span class="slot-professional">${escapeHTML(person.name)}</span></button>`;
     }).join('');
   }
   function selectDate(date) {
+    if (state.busy || !state.storageReady || state.loading) return;
     state.date = date;
     state.slot = null;
     state.stage = 'selection';
@@ -222,8 +251,10 @@
     updateProgress();
     document.querySelector(`[data-date="${date}"]`)?.focus({ preventScroll: true });
     announce('');
+    if (remote) refreshData(true);
   }
   function selectSlot(start, professionalId) {
+    if (state.busy || state.loading || !state.storageReady || state.uncertain) return;
     const slot = availability().slots.find((option) => option.start === start && option.professionalId === professionalId);
     if (!slot) { announce('Este hueco ya no está disponible. Selecciona otra hora.', 'booking-status', true); return; }
     state.slot = slot;
@@ -265,7 +296,7 @@
   }
   function reviewBooking(event) {
     event.preventDefault();
-    if (state.busy) return;
+    if (state.busy || state.loading || !state.storageReady || state.uncertain) return;
     const customer = validateCustomerForm();
     if (!customer || !state.slot) return;
     state.customer = customer;
@@ -283,10 +314,10 @@
   }
   window.NovaNotifications = Object.freeze({ sendConfirmationEmail });
   async function confirmBooking() {
-    if (state.busy || !state.slot || state.stage !== 'review') return;
+    if (state.busy || state.loading || !state.storageReady || state.uncertain || !state.slot || state.stage !== 'review') return;
     state.busy = true;
-    $('confirm-booking').disabled = true;
-    $('modify-booking').disabled = true;
+    state.requestId += 1;
+    updateAvailabilityControls();
     $('confirm-booking').textContent = 'Confirmando…';
     try {
       // El repositorio relee la agenda y comprueba TODO el intervalo al guardar.
@@ -297,7 +328,7 @@
       $('success-summary').innerHTML = summaryMarkup(booking) + `<p class="confirmation-location"><strong>${escapeHTML(data.business.name)}</strong><br>${escapeHTML(data.business.address)}<br>Teléfono ficticio: <a href="tel:${escapeHTML(data.business.phone.replace(/\s/g, ''))}">${escapeHTML(data.business.phone)}</a></p>`;
       $('success-email').textContent = `Te enviaremos la confirmación a ${booking.customer.email}`;
       updateProgress();
-      announce('Reserva guardada en este navegador. Tu cita está confirmada en la demo.');
+      announce(remote ? 'Reserva confirmada. Tu cita se ha guardado en la agenda compartida del salón.' : 'Reserva guardada en este navegador. Tu cita está confirmada en la demo.');
       $('customer-form').reset();
       clearCustomerErrors();
       // Un fallo futuro del correo nunca debe deshacer una reserva ya confirmada.
@@ -313,13 +344,26 @@
         await refreshData(false);
         updateProgress();
         announce('La hora elegida ya no está disponible. Selecciona otro hueco para continuar.', 'booking-status', true);
-        focusElement($('service-select'));
-      } else announce(error.message || 'No se ha podido guardar la reserva. Inténtalo de nuevo.', 'booking-status', true);
+        focusElement($('slots-title'));
+      } else if (remote && error.code === 'BOOKING_UNCERTAIN') {
+        // Un corte de conexión tras enviar el INSERT no demuestra que este fallara.
+        // No reintentamos ni atribuimos al cliente un intervalo público de otra persona.
+        state.uncertain = true;
+        await refreshData(false);
+        announce('No se ha podido verificar el resultado de la reserva. No vuelvas a enviarla sin comprobar antes si se ha guardado.', 'booking-status', true);
+      } else {
+        if (remote && ['CONNECTION_ERROR', 'CONFIG_ERROR'].includes(error.code)) {
+          state.storageReady = false;
+          state.availabilityError = true;
+        }
+        announce(error.message || 'No se ha podido guardar la reserva. Inténtalo de nuevo.', 'booking-status', true);
+      }
     } finally {
       state.busy = false;
-      $('confirm-booking').disabled = false;
-      $('modify-booking').disabled = false;
       $('confirm-booking').textContent = 'Confirmar reserva';
+      updateAvailabilityControls();
+      renderCalendar();
+      renderSlots();
     }
   }
   function clearCustomerErrors() {
@@ -329,6 +373,7 @@
     });
   }
   function renderAgenda() {
+    if (remote) return;
     if (!state.storageReady) {
       $('agenda-list').innerHTML = '<p class="empty-state">No se ha podido leer la agenda. Si los datos locales están dañados, puedes restaurar la demo.</p>';
       return;
@@ -343,6 +388,7 @@
     }).join('');
   }
   function renderPhoneProfessionals() {
+    if (remote) return;
     const service = serviceById($('phone-service').value);
     if (!service) return;
     const previous = $('phone-professional').value;
@@ -351,6 +397,7 @@
     renderPhoneTimes();
   }
   function renderPhoneTimes() {
+    if (remote) return;
     $('phone-date').min = today();
     const previous = $('phone-time').value;
     const date = $('phone-date').value;
@@ -367,7 +414,7 @@
   }
   async function addPhoneBooking(event) {
     event.preventDefault();
-    if (state.busy) return;
+    if (state.busy || remote) return;
     const customer = customerValues('phone');
     const errors = core.validateCustomer(customer);
     const fieldIds = { name: 'phone-name', phone: 'phone-number', email: 'phone-email' };
@@ -394,10 +441,10 @@
     } catch (error) {
       announce(error.message || 'No se pudo añadir la cita.', 'phone-errors', true);
       await refreshData(true);
-    } finally { state.busy = false; submit.disabled = false; }
+    } finally { state.busy = false; submit.disabled = false; renderCalendar(); renderSlots(); updateAvailabilityControls(); }
   }
   async function cancelDemoBooking(id) {
-    if (state.busy) return;
+    if (state.busy || remote) return;
     state.busy = true;
     try {
       await repository.cancelBooking(id);
@@ -416,10 +463,10 @@
       await refreshData(true);
       announce(error.message || 'No se pudo cancelar la cita.', 'demo-status', true);
     }
-    finally { state.busy = false; }
+    finally { state.busy = false; renderCalendar(); renderSlots(); updateAvailabilityControls(); }
   }
   async function resetDemo() {
-    if (state.busy) return;
+    if (state.busy || remote) return;
     state.busy = true;
     const button = $('confirm-reset');
     if (button) button.disabled = true;
@@ -437,31 +484,74 @@
       announce('Agenda de demostración restaurada. Ya puedes reservar.');
     } catch (error) {
       if ($('reset-status')) $('reset-status').textContent = error.message || 'No se pudo restaurar la demo.';
-    } finally { state.busy = false; if (button) button.disabled = false; }
+    } finally { state.busy = false; if (button) button.disabled = false; renderCalendar(); renderSlots(); updateAvailabilityControls(); }
+  }
+  function calendarRange() {
+    if (state.month < firstOfMonth()) {
+      state.month = firstOfMonth();
+      if (state.date && state.date < core.toDateKey(state.month)) {
+        state.date = '';
+        state.slot = null;
+        if (state.stage === 'review') state.stage = 'selection';
+      }
+    }
+    return {
+      startDate: core.toDateKey(state.month),
+      endDate: core.toDateKey(new Date(state.month.getFullYear(), state.month.getMonth() + 1, 1))
+    };
   }
   async function refreshData(validateSelection = true) {
+    // Cada petición conserva su rango. Una respuesta lenta de otro mes nunca
+    // sustituye los intervalos de la selección más reciente.
+    const requestId = ++state.requestId;
+    const range = calendarRange();
+    const focusBeforeLoading = document.activeElement;
+    if (remote) {
+      state.loading = true;
+      state.storageReady = false;
+      announce('Cargando disponibilidad…');
+      renderCalendar();
+      renderSlots();
+      updateAvailabilityControls();
+    }
     try {
-      state.bookings = await repository.listBookings();
+      const bookings = await repository.listBookings(remote ? range : undefined);
+      if (requestId !== state.requestId) return false;
+      state.bookings = bookings;
       state.storageReady = true;
+      state.loading = false;
+      state.availabilityError = false;
+      if (remote) announce(state.confirmed ? 'Reserva confirmada. La disponibilidad compartida está actualizada.' : 'Disponibilidad actualizada. Todas las horas corresponden a Europe/Madrid.');
       if (validateSelection && state.slot && !availability().slots.some((slot) => slot.start === state.slot.start && slot.professionalId === state.slot.professionalId)) {
         state.slot = null;
         state.stage = 'selection';
         announce('La agenda ha cambiado y tu hora ya no está disponible. Selecciona otra.', 'booking-status', true);
       }
-      if (state.confirmed && !state.bookings.some((booking) => booking.id === state.confirmed.id)) {
+      // Los intervalos remotos no incluyen identidad ni datos de clientes. No
+      // intentamos atribuirlos a una persona ni deducir cancelaciones privadas.
+      if (!remote && state.confirmed && !state.bookings.some((booking) => booking.id === state.confirmed.id)) {
         state.confirmed = null;
         state.stage = 'selection';
         announce('Esta cita se ha cancelado o la agenda se ha restaurado. Puedes reservar de nuevo.');
       }
     } catch (error) {
+      if (requestId !== state.requestId) return false;
       state.storageReady = false;
+      state.loading = false;
+      state.availabilityError = true;
+      if (remote) state.bookings = [];
       state.slot = null;
-      if (state.stage === 'review') state.stage = 'selection';
+      if (state.stage === 'review' && !state.uncertain) state.stage = 'selection';
       // Un fallo de lectura puede ocurrir después de un guardado correcto.
-      announce(`${error.message || 'No se puede acceder al almacenamiento local.'} La disponibilidad no puede actualizarse en este momento.`, 'booking-status', true);
-      announce('La agenda requiere almacenamiento local. Permite su uso en el navegador o restaura los datos si están dañados.', 'demo-status', true);
+      announce(`${state.confirmed ? 'Tu reserva sigue confirmada. ' : ''}${error.message || (remote ? 'Error de conexión con la agenda.' : 'No se puede acceder al almacenamiento local.')} La disponibilidad no puede actualizarse en este momento.`, 'booking-status', true);
+      if (!remote) announce('La agenda requiere almacenamiento local. Permite su uso en el navegador o restaura los datos si están dañados.', 'demo-status', true);
     }
-    const focused = document.activeElement;
+    // Al mostrar carga se reemplazan los botones. En un navegador real esto
+    // devuelve el foco al body; lo recuperamos salvo que la persona ya se moviera.
+    const currentFocus = document.activeElement;
+    const focused = remote && focusBeforeLoading && !focusBeforeLoading.isConnected &&
+      (currentFocus === document.body || currentFocus === focusBeforeLoading)
+      ? focusBeforeLoading : currentFocus;
     const focusSelector = focused?.dataset.date ? `[data-date="${focused.dataset.date}"]`
       : focused?.dataset.slot ? `[data-slot="${focused.dataset.slot}"][data-professional="${focused.dataset.professional}"]`
       : focused?.dataset.cancelBooking ? `[data-cancel-booking="${focused.dataset.cancelBooking}"]` : null;
@@ -472,6 +562,7 @@
     updateProgress();
     // Las actualizaciones de otra pestaña o del reloj conservan el foco de teclado.
     if (focusSelector && !focused.isConnected) document.querySelector(focusSelector)?.focus({ preventScroll: true });
+    return state.storageReady;
   }
 
   // Carrusel: pausa explícita, pausa al usarlo y respeto al movimiento reducido.
@@ -536,13 +627,14 @@
     });
     $('service-select').addEventListener('change', (event) => selectService(event.target.value));
     $('professional-options').addEventListener('change', (event) => {
-      if (event.target.name !== 'professional') return;
+      if (event.target.name !== 'professional' || state.busy) return;
       state.professionalId = event.target.value;
       state.slot = null;
       renderCalendar();
       renderSlots();
       updateProgress();
       announce('Disponibilidad actualizada para el profesional elegido.');
+      if (remote) refreshData(true);
     });
     $('calendar-prev').addEventListener('click', () => changeMonth(-1));
     $('calendar-next').addEventListener('click', () => changeMonth(1));
@@ -567,8 +659,10 @@
     $('back-to-selection').addEventListener('click', () => { state.slot = null; renderSlots(); updateProgress(); focusElement($('service-select')); });
     $('modify-booking').addEventListener('click', () => { state.stage = 'selection'; updateProgress(); announce('Puedes cambiar el servicio, el horario o tus datos antes de confirmar.'); focusElement($('service-select')); });
     $('confirm-booking').addEventListener('click', confirmBooking);
-    $('new-booking').addEventListener('click', () => { state.date = ''; state.month = firstOfMonth(); state.customer = null; selectService('', true); });
+    $('retry-availability').addEventListener('click', () => { if (!state.busy && !state.loading) refreshData(true); });
+    $('new-booking').addEventListener('click', () => { if (state.busy) return; state.date = ''; state.month = firstOfMonth(); state.customer = null; selectService('', true); });
     $('toggle-phone-form').addEventListener('click', () => {
+      if (remote) return;
       const open = $('phone-form').hidden;
       $('phone-form').hidden = !open;
       $('toggle-phone-form').setAttribute('aria-expanded', String(open));
@@ -579,7 +673,7 @@
     $('phone-professional').addEventListener('change', renderPhoneTimes);
     $('phone-date').addEventListener('change', renderPhoneTimes);
     $('phone-form').addEventListener('submit', addPhoneBooking);
-    $('reset-demo').addEventListener('click', () => openDialog(`<span class="eyebrow">Herramientas de demostración</span><h2 id="dialog-title">Restaurar la agenda demo</h2><p>Se eliminarán las citas guardadas en este navegador y se crearán de nuevo las citas de ejemplo a partir de la fecha actual.</p><p>Esta acción también elimina las reservas que hayas creado durante las pruebas.</p><p id="reset-status" role="alert"></p><div class="dialog-actions"><button id="confirm-reset" type="button" class="btn btn-primary">Restaurar datos demo</button><button type="button" class="btn btn-secondary" data-close-dialog>Volver sin restaurar</button></div>`));
+    $('reset-demo').addEventListener('click', () => { if (remote) return; openDialog(`<span class="eyebrow">Herramientas de demostración</span><h2 id="dialog-title">Restaurar la agenda demo</h2><p>Se eliminarán las citas guardadas en este navegador y se crearán de nuevo las citas de ejemplo a partir de la fecha actual.</p><p>Esta acción también elimina las reservas que hayas creado durante las pruebas.</p><p id="reset-status" role="alert"></p><div class="dialog-actions"><button id="confirm-reset" type="button" class="btn btn-primary">Restaurar datos demo</button><button type="button" class="btn btn-secondary" data-close-dialog>Volver sin restaurar</button></div>`); });
     $('directions-button').addEventListener('click', () => openDialog('<span class="eyebrow">Ubicación de demostración</span><h2 id="dialog-title">Nos vemos en la próxima fase</h2><p>NOVA Hair Studio y Calle Ejemplo 23, Madrid son ficticios. Por eso esta demo no abre indicaciones hacia una dirección real.</p><p>Este espacio está preparado para añadir el mapa y la ruta cuando el salón tenga una ubicación real.</p><button type="button" class="btn btn-primary" data-close-dialog>Entendido</button>'));
     $('close-dialog').addEventListener('click', () => $('example-dialog').close());
     $('example-dialog').addEventListener('close', () => { document.body.classList.remove('dialog-open'); if (dialogTrigger?.isConnected && !$('example-dialog').open) dialogTrigger.focus({ preventScroll: true }); });
@@ -590,6 +684,7 @@
     });
   }
   function changeMonth(delta) {
+    if (state.busy) return;
     const next = new Date(state.month.getFullYear(), state.month.getMonth() + delta, 1);
     if (next < firstOfMonth()) return;
     state.month = next;
@@ -598,9 +693,11 @@
     renderCalendar();
     renderSlots();
     updateProgress();
+    if (remote) refreshData(true);
   }
   async function init() {
     renderBusinessInfo();
+    renderStorageMode();
     renderServices();
     renderProfessionals();
     renderGallery();
@@ -608,17 +705,18 @@
     bindEvents();
     renderProfessionalChoices();
     renderPhoneProfessionals();
-    await refreshData(false);
     repository.subscribe(() => { if (!state.busy) refreshData(true); });
-    // Actualiza huecos que han vencido y cambios recibidos al volver a la pestaña.
-    window.setInterval(() => { if (!document.hidden && !state.busy) refreshData(true); }, 60000);
+    // Solo se consulta disponibilidad pública: no se suscriben eventos Realtime
+    // de filas completas que pudieran contener datos de contacto.
+    window.setInterval(() => { if (!document.hidden && !state.busy && !state.loading) refreshData(true); }, remote ? 30000 : 60000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden && !state.busy) refreshData(true); });
     if ('ResizeObserver' in window) new ResizeObserver((entries) => {
       document.documentElement.style.setProperty('--header-height', `${Math.ceil(entries[0].target.getBoundingClientRect().height)}px`);
     }).observe($('site-header'));
+    await refreshData(false);
   }
-  init().catch((error) => {
+  init().catch(() => {
     announce('No se pudo iniciar la agenda. Recarga la página para intentarlo de nuevo.', 'booking-status', true);
-    console.error('NOVA: error al iniciar la aplicación.', error);
+    console.error('NOVA: no se pudo iniciar la interfaz.');
   });
 }());

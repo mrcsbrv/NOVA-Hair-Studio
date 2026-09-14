@@ -96,6 +96,8 @@
               <li data-step="review"><span>3</span>Confirmación</li>
             </ol>
             <p class="booking-status" id="booking-status" role="status" aria-live="polite"></p>
+            <button class="btn btn-text btn-small" id="retry-availability" type="button" hidden>Actualizar disponibilidad</button>
+            <p class="field-error" id="booking-uncertain-note" role="alert" hidden>No se ha podido verificar si la reserva se guardó. Para evitar duplicarla, no se volverá a enviar desde esta página. Comprueba la cita con el salón antes de repetirla.</p>
             <div id="booking-selection">
               <div class="service-selection">
                 <div class="form-field">
@@ -128,7 +130,7 @@
                 <div class="slots-panel">
                   <div class="subsection-title">
                     <span class="eyebrow">LA HORA</span>
-                    <h3 id="slots-title">Horarios disponibles</h3>
+                    <h3 id="slots-title" tabindex="-1">Horarios disponibles</h3>
                   </div>
                   <p class="field-hint">Cada hueco incluye todo el tiempo que necesita tu servicio.</p>
                   <div class="slots-grid" id="slots-grid">
@@ -160,7 +162,7 @@
                   <p class="field-error" id="error-email"></p>
                 </div>
               </div>
-              <p class="form-privacy">Prueba con datos ficticios. En esta demo se guardan únicamente en este navegador; puedes borrarlos desde las herramientas de demostración.</p>
+              <p class="form-privacy" id="customer-privacy">Prueba con datos ficticios. En esta demo se guardan únicamente en este navegador; puedes borrarlos desde las herramientas de demostración.</p>
               <div class="form-actions"><button class="btn btn-primary" type="submit">Revisar mi reserva <span aria-hidden="true">→</span></button><button class="btn btn-text" id="back-to-selection" type="button">Cambiar servicio u hora</button></div>
             </form>
             <div class="booking-review" id="booking-review" hidden>
@@ -186,11 +188,11 @@
           <div class="phone-reservation">
             <div>
               <h3>¿Prefieres reservar hablando con nosotros?</h3>
-              <p>Las citas telefónicas también se añadirían a la agenda para evitar dobles reservas. Puedes probarlo en las herramientas de demostración.</p>
+              <p id="phone-reservation-note">Las citas telefónicas también se añadirían a la agenda para evitar dobles reservas. Puedes probarlo en las herramientas de demostración.</p>
             </div>
             <a class="btn btn-secondary" href="tel:+34910000000"><span aria-hidden="true">↗</span>Llamar para reservar</a>
           </div>
-          <p class="booking-demo-note">Demo local · Las reservas se conservan en este navegador y no se comparten con otros dispositivos. Teléfono ficticio: 910 000 000.</p>
+          <p class="booking-demo-note" id="storage-mode-note">Configuración Supabase pendiente · Modo demo local. Horario del salón: Europe/Madrid. Teléfono ficticio: 910 000 000.</p>
         </div>
       </section>
       <section class="section container" id="galeria" aria-labelledby="gallery-title">
@@ -221,11 +223,11 @@
             </details>
             <details class="faq-item">
               <summary>¿Puedo cancelar una reserva?</summary>
-              <p>Sí. En esta demo puedes cancelar tus citas desde «Herramientas de demostración», al final de la página. El horario volverá a estar disponible de inmediato.</p>
+              <p id="faq-cancellation">Sí. En esta demo puedes cancelar tus citas desde «Herramientas de demostración», al final de la página. El horario volverá a estar disponible de inmediato.</p>
             </details>
             <details class="faq-item">
               <summary>¿Puedo reservar por teléfono?</summary>
-              <p>La web está preparada para ello. El número mostrado es ficticio; para probar una reserva telefónica usa las herramientas de demostración. La cita bloqueará el horario igual que una reserva web.</p>
+              <p id="faq-phone">La web está preparada para ello. El número mostrado es ficticio; para probar una reserva telefónica usa las herramientas de demostración. La cita bloqueará el horario igual que una reserva web.</p>
             </details>
             <details class="faq-item">
               <summary>¿Qué ocurre si llego tarde?</summary>
@@ -269,7 +271,7 @@
           <span class="map-caption">Espacio preparado para un mapa real</span>
         </div>
       </section>
-      <section class="demo-section container" aria-label="Agenda y herramientas de demostración">
+      <section class="demo-section container" id="demo-section" aria-label="Agenda y herramientas de demostración" hidden>
         <details class="demo-tools" id="demo-tools">
           <summary><span>Herramientas de demostración</span><span class="demo-summary-note">Agenda local</span></summary>
           <div class="demo-content">
@@ -318,7 +320,11 @@
       <div class="noscript-message">Activa JavaScript para consultar servicios, disponibilidad y probar las reservas de esta demostración.</div>
     </noscript>
     <script src="data.js"></script>
+    <script src="salon-time.js"></script>
     <script src="booking-core.js"></script>
+    <script src="supabase-config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-repository.js"></script>
     <script src="script.js"></script>
   </body>
 </html>
