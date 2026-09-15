@@ -63,6 +63,39 @@ def run():
     dashboard = next((attrs for _, attrs, _ in doc.elements if attrs.get("id") == "dashboard"), {})
     check("hidden" in dashboard, "El panel privado debe estar oculto antes de verificar la sesión")
 
+    # Contrato accesible del nuevo editor privado de disponibilidad. Los tests
+    # de interfaz comprueban acciones; aquí se comprueban enlaces y semántica.
+    by_id = {attrs["id"]: (tag, attrs) for tag, attrs, _ in doc.elements if "id" in attrs}
+    expected_tabs = {"agenda", "phone", "availability", "history"}
+    tabs = {attrs.get("data-admin-tab"): attrs for _, attrs, _ in doc.elements if "data-admin-tab" in attrs}
+    check(set(tabs) == expected_tabs, "La navegación debe conservar Agenda, cita telefónica, Disponibilidad e Historial")
+    for name in expected_tabs:
+        check(tabs.get(name, {}).get("aria-pressed") in ("true", "false"), f"La sección {name} no anuncia su estado")
+    for identifier in ("availability-view", "blocks-list", "blocks-empty", "refresh-blocks", "block-form", "block-submit"):
+        check(identifier in by_id, f"Falta un elemento de disponibilidad: {identifier}")
+    for identifier in ("blocks-feedback", "block-form-feedback", "block-impact-feedback", "block-remove-feedback"):
+        attrs = by_id.get(identifier, (None, {}))[1]
+        check(attrs.get("role") in ("status", "alert") or attrs.get("aria-live") in ("polite", "assertive"), f"{identifier}: el estado no se anuncia")
+    for identifier in ("block-impact-dialog", "block-remove-dialog"):
+        tag, attrs = by_id.get(identifier, (None, {}))
+        check(tag == "dialog", f"{identifier}: falta diálogo semántico")
+        check("open" not in attrs, f"{identifier}: el diálogo privado aparece antes de autorizar")
+    for identifier in ("block-impact-back", "block-impact-confirm", "block-remove-back", "block-remove-confirm"):
+        tag, attrs = by_id.get(identifier, (None, {}))
+        check(tag == "button" and attrs.get("type") == "button", f"{identifier}: confirmación o vuelta no operable con teclado")
+    for identifier, expected_type in {
+        "block-start-date": "date", "block-end-date": "date", "block-start-time": "time",
+        "block-end-time": "time", "block-all-day": "checkbox",
+    }.items():
+        tag, attrs = by_id.get(identifier, (None, {}))
+        check(tag == "input" and attrs.get("type") == expected_type, f"{identifier}: control de fecha/hora incorrecto")
+    reason_tag, reason_attrs = by_id.get("block-reason", (None, {}))
+    check(reason_tag == "textarea" and reason_attrs.get("maxlength") == "500", "El motivo privado debe limitarse a 500 caracteres")
+    check("required" not in reason_attrs, "El motivo debe ser opcional")
+    for identifier in ("block-professional", "block-kind", "block-start-date", "block-start-time", "block-end-date", "block-end-time", "block-reason"):
+        attrs = by_id.get(identifier, (None, {}))[1]
+        check(identifier + "-error" in attrs.get("aria-describedby", "").split(), f"{identifier}: falta asociar el error al control")
+
     password_inputs = []
     script_sources = []
     local_sources = []
@@ -148,6 +181,8 @@ def run():
     check(bool(re.search(r"@media[^{}]+(?:max-width|min-width)", css)), "Faltan reglas responsive específicas del panel")
     check(bool(re.search(r"\[hidden\]\s*\{[^}]*display\s*:\s*none", combined_css)), "Falta regla que respete hidden")
     check("overflow-wrap" in combined_css or "word-break" in combined_css, "Falta protección para contactos largos en móvil")
+    check("Europe/Madrid" in html or "Madrid" in html, "El editor no informa de la zona horaria del salón")
+    check(not re.search(r"\b(?:localStorage|sessionStorage)\s*\.\s*setItem\s*\(", script), "El controlador no debe persistir motivos ni reservas privadas")
 
     # Detecta credenciales privadas literales, no comentarios que prohíben usarlas.
     # No inspecciona ni imprime los valores de supabase-config.js.

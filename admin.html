@@ -73,6 +73,7 @@
         <nav class="admin-nav" aria-label="Secciones del panel">
           <button type="button" data-admin-tab="agenda" aria-pressed="true" aria-controls="agenda-view">Agenda</button>
           <button type="button" data-admin-tab="phone" aria-pressed="false" aria-controls="phone-view">Nueva cita telefónica</button>
+          <button type="button" data-admin-tab="availability" aria-pressed="false" aria-controls="availability-view">Disponibilidad</button>
           <button type="button" data-admin-tab="history" aria-pressed="false" aria-controls="agenda-view">Historial / canceladas</button>
         </nav>
 
@@ -173,6 +174,76 @@
             </aside>
           </div>
         </section>
+        <section id="availability-view" class="admin-view" aria-labelledby="availability-title" hidden>
+          <div class="view-heading">
+            <div><p class="eyebrow">EL TIEMPO DE TU EQUIPO</p><h2 id="availability-title">Disponibilidad</h2></div>
+            <button id="refresh-blocks" class="btn btn-secondary btn-small" type="button">Actualizar disponibilidad <span aria-hidden="true">↻</span></button>
+          </div>
+          <div class="phone-layout">
+            <form id="block-form" class="phone-form block-form" novalidate>
+              <fieldset>
+                <legend>Crear un bloqueo</legend>
+                <div class="form-grid">
+                  <div class="form-field">
+                    <label for="block-professional">¿A quién afecta?</label>
+                    <select id="block-professional" name="professional" required aria-describedby="block-professional-error"><option value="all">Todo el salón</option></select>
+                    <p id="block-professional-error" class="field-error"></p>
+                  </div>
+                  <div class="form-field">
+                    <label for="block-kind">Tipo</label>
+                    <select id="block-kind" name="kind" required aria-describedby="block-kind-error">
+                      <option value="absence">Ausencia</option><option value="vacation">Vacaciones</option><option value="closed">Cierre</option><option value="other">Otro</option>
+                    </select>
+                    <p id="block-kind-error" class="field-error"></p>
+                  </div>
+                  <div class="form-field form-field-wide">
+                    <label class="checkbox-field" for="block-all-day"><input id="block-all-day" name="all-day" type="checkbox" aria-describedby="block-range-note"><span>Día completo</span></label>
+                    <p id="block-range-note" class="field-hint">Fechas y horas de Madrid. Puedes seleccionar un periodo de varios días.</p>
+                  </div>
+                  <div class="form-field">
+                    <label for="block-start-date">Fecha de inicio</label>
+                    <input id="block-start-date" name="start-date" type="date" required aria-describedby="block-start-date-error">
+                    <p id="block-start-date-error" class="field-error"></p>
+                  </div>
+                  <div id="block-start-time-field" class="form-field">
+                    <label for="block-start-time">Hora de inicio</label>
+                    <input id="block-start-time" name="start-time" type="time" step="60" required aria-describedby="block-start-time-error">
+                    <p id="block-start-time-error" class="field-error"></p>
+                  </div>
+                  <div class="form-field">
+                    <label for="block-end-date">Fecha de fin</label>
+                    <input id="block-end-date" name="end-date" type="date" required aria-describedby="block-end-date-error">
+                    <p id="block-end-date-error" class="field-error"></p>
+                  </div>
+                  <div id="block-end-time-field" class="form-field">
+                    <label for="block-end-time">Hora de fin</label>
+                    <input id="block-end-time" name="end-time" type="time" step="60" required aria-describedby="block-end-time-error">
+                    <p id="block-end-time-error" class="field-error"></p>
+                  </div>
+                  <div class="form-field form-field-wide">
+                    <label for="block-reason">Motivo <span class="optional-label">(opcional)</span></label>
+                    <textarea id="block-reason" name="reason" rows="3" maxlength="500" autocomplete="off" aria-describedby="block-reason-note block-reason-error"></textarea>
+                    <p id="block-reason-note" class="field-hint">Solo lo verá la administración. Máximo 500 caracteres.</p>
+                    <p id="block-reason-error" class="field-error"></p>
+                  </div>
+                </div>
+              </fieldset>
+              <button id="block-submit" class="btn btn-primary" type="submit">Bloquear disponibilidad</button>
+              <p id="block-form-feedback" class="feedback" role="status" aria-live="polite" aria-atomic="true"></p>
+            </form>
+            <aside class="phone-aside" aria-labelledby="block-help-title">
+              <span class="aside-mark" aria-hidden="true">◷</span>
+              <h3 id="block-help-title">Reserva tiempo para tu equipo.</h3>
+              <p>Gestiona ausencias, vacaciones o cierres para una persona o para todo el salón.</p>
+              <p>Los bloqueos impiden nuevas reservas en ese intervalo. Si ya hay citas, podrás revisarlas antes de continuar.</p>
+              <p class="field-hint">Las citas existentes se conservan. No se envían avisos ni se cancelan automáticamente.</p>
+            </aside>
+          </div>
+          <div class="view-heading blocks-heading"><h3 id="blocks-title">Bloqueos activos</h3></div>
+          <p id="blocks-feedback" class="feedback" role="status" aria-live="polite" aria-atomic="true"></p>
+          <div id="blocks-list" class="agenda-list" aria-labelledby="blocks-title"></div>
+          <p id="blocks-empty" class="empty-state" hidden>No hay bloqueos activos.</p>
+        </section>
       </section>
       <p id="admin-notice" class="feedback admin-notice" role="status" aria-live="polite" aria-atomic="true"></p>
       <noscript><p class="empty-state">Activa JavaScript en tu navegador para iniciar sesión y gestionar la agenda.</p></noscript>
@@ -182,12 +253,36 @@
     <dialog id="cancel-dialog" class="cancel-dialog" aria-labelledby="cancel-title" aria-describedby="cancel-description">
       <p class="eyebrow">CANCELACIÓN DE CITA</p>
       <h2 id="cancel-title">¿Cancelar esta cita?</h2>
-      <p id="cancel-description">La cita pasará al historial de canceladas y su horario volverá a estar disponible.</p>
+      <p id="cancel-description">La cita pasará al historial de canceladas. El horario quedará libre si no hay otra reserva o bloqueo.</p>
       <p class="field-hint">La reserva se conservará en la agenda. No se enviará un aviso automático al cliente.</p>
       <p id="cancel-feedback" class="feedback error-feedback" role="alert"></p>
       <div class="dialog-actions">
         <button id="cancel-dismiss" class="btn btn-secondary" type="button" autofocus>Mantener cita</button>
         <button id="cancel-confirm" class="btn btn-danger" type="button">Sí, cancelar cita</button>
+      </div>
+    </dialog>
+
+    <dialog id="block-impact-dialog" class="cancel-dialog impact-dialog" aria-labelledby="block-impact-title" aria-describedby="block-impact-message">
+      <p class="eyebrow">HAY CITAS EN ESTE PERIODO</p>
+      <h2 id="block-impact-title">¿Quieres crear el bloqueo igualmente?</h2>
+      <p id="block-impact-message"></p>
+      <ul id="block-impact-list" class="impact-list"></ul>
+      <p class="field-hint">Estas citas se conservarán. Podrás contactar con los clientes desde la agenda.</p>
+      <p id="block-impact-feedback" class="feedback error-feedback" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="block-impact-back" class="btn btn-secondary" type="button" autofocus>Volver</button>
+        <button id="block-impact-confirm" class="btn btn-primary" type="button">Crear bloqueo igualmente</button>
+      </div>
+    </dialog>
+    <dialog id="block-remove-dialog" class="cancel-dialog" aria-labelledby="block-remove-title" aria-describedby="block-remove-description">
+      <p class="eyebrow">VOLVER A HABILITAR HORARIO</p>
+      <h2 id="block-remove-title">¿Eliminar este bloqueo?</h2>
+      <p id="block-remove-description"></p>
+      <p class="field-hint">El periodo volverá a estar disponible si no hay otra reserva o bloqueo. El registro se conservará como inactivo.</p>
+      <p id="block-remove-feedback" class="feedback error-feedback" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="block-remove-back" class="btn btn-secondary" type="button" autofocus>Volver</button>
+        <button id="block-remove-confirm" class="btn btn-danger" type="button">Eliminar bloqueo</button>
       </div>
     </dialog>
 

@@ -51,19 +51,29 @@ Mantén los precios, duraciones y compatibilidades de `data.js` alineados con la
 6. Para probar un conflicto, deja el resumen de la misma hora preparado en ambos navegadores antes de confirmar. Solo debe guardarse una cita. El segundo intento debe mostrar que el hueco dejó de estar disponible y ofrecer otros horarios.
 7. Para probar errores, desconecta la red antes de actualizar disponibilidad. Las horas y la confirmación deben quedar bloqueadas, con opción de reintentar. No se crea ningún registro local. Si se pierde la respuesta después de enviar una reserva, la página explica que el resultado es incierto y bloquea repetirla; comprueba el registro desde tu proyecto antes de intentar otra reserva.
 
-En las herramientas de red del navegador puedes comprobar que las consultas a `nova_bookings` piden exclusivamente `professional_id,start_at,end_at,status`, filtran `status=confirmed` y limitan el rango. Los POST deben contener únicamente las seis columnas de creación descritas abajo. No copies ni compartas datos de contacto reales durante las pruebas.
+En las herramientas de red del navegador puedes comprobar que las consultas a `nova_bookings` piden exclusivamente `professional_id,start_at,end_at,status`, filtran `status=confirmed` y limitan el rango. Las consultas públicas a `nova_blocks` piden solo `professional_id,start_at,end_at,active`, con `active=true` y el mismo rango. Los POST de reservas deben contener únicamente las seis columnas de creación descritas abajo. No copies ni compartas datos de contacto reales durante las pruebas.
 
 No se ejecuta SQL ni se modifica la base de datos, RLS, sus políticas o sus validaciones desde este proyecto. Las pruebas reales requieren la configuración manual y el esquema existente; las pruebas automáticas incluidas usan respuestas controladas.
 
 ## Qué consulta y guarda la web pública
 
-**Lectura:** solo intervalos confirmados que se solapan con el mes visible, usando un fin de rango exclusivo. Antes de insertar se consulta además el día concreto. Se seleccionan exclusivamente:
+**Lectura de reservas:** solo intervalos confirmados que se solapan con el mes visible, usando un fin de rango exclusivo. Antes de insertar se consulta además el día concreto. Se seleccionan exclusivamente:
 
 ```text
 professional_id, start_at, end_at, status
 ```
 
 Las respuestas se transforman a `{ professionalId, date, start, end }`, el formato mínimo que necesita el motor. No se solicitan identificadores de reserva, nombres, teléfonos ni emails de otros clientes. Las lecturas están paginadas; si se detectan resultados incompletos, inconsistentes o una correspondencia inválida, la interfaz no ofrece disponibilidad.
+
+**Lectura de bloqueos:** `nova_blocks` se consulta con `active=true`, únicamente para intervalos solapados con el mismo rango. Se seleccionan exclusivamente:
+
+```text
+professional_id, start_at, end_at, active
+```
+
+El repositorio devuelve `{ bookings, blocks }` mediante `listAvailability(range)`. Los dos conjuntos se conservan por separado; el motor recibe intervalos y trata `professionalId: null` como tiempo ocupado para todo el salón. Un ID concreto afecta únicamente a esa persona. Se respetan las duraciones completas, el calendario, los días llenos y «Cualquiera disponible». Ni el tipo, ni el motivo, ni el autor del bloqueo se consultan o muestran públicamente.
+
+La disponibilidad no está lista hasta que terminan **ambas lecturas**. Si falla alguna, no se ofrecen horas ni se confirma usando una lista parcial. Bloqueos iguales pueden existir en la base de datos: se cuentan todas sus filas al paginar y solo se deduplica el efecto de los intervalos.
 
 **Creación:** al confirmar se envían exclusivamente:
 
@@ -74,7 +84,7 @@ customer_name, customer_phone, customer_email
 
 No se envían `end_at`, `status`, `source`, `created_at` ni `id`. El INSERT no encadena `.select()`, de forma que no intenta leer el registro privado recién creado. El SDK [no devuelve filas insertadas salvo que se soliciten](https://supabase.com/docs/reference/javascript/insert).
 
-Justo antes de insertar se releen los intervalos del día y se comprueba toda la duración. La protección atómica contra solapamientos corresponde a la base de datos existente. Después se actualizan la agenda y la confirmación. Si una escritura fue aceptada pero todavía no aparece en la consulta pública, una comprobación en memoria impide presentar ese día como libre hasta poder verificarlo. Solo conserva metadatos del intervalo, sin datos de cliente.
+Justo antes de insertar se releen las reservas **y los bloqueos** del día y se comprueba toda la duración. La protección atómica contra solapamientos corresponde a la base de datos existente. Si devuelve `HORARIO_BLOQUEADO`, la interfaz muestra «Este horario acaba de dejar de estar disponible.», refresca los datos y vuelve al selector de horas. Después de un guardado correcto se actualizan la agenda y la confirmación. Si una escritura fue aceptada pero todavía no aparece en la consulta pública, una comprobación en memoria impide presentar ese día como libre hasta poder verificarlo. Solo conserva metadatos del intervalo, sin datos de cliente.
 
 Los datos de la propia confirmación permanecen en memoria de la página. En modo Supabase no se leen, escriben ni mezclan las reservas de localStorage. Tampoco se migran automáticamente las citas de pruebas anteriores. Estas seguirán disponibles únicamente al volver expresamente al modo local.
 
@@ -118,7 +128,7 @@ La vista inicial es **Próximas**. Los filtros **Hoy**, **Todas**, **Canceladas*
 
 1. Abre «Nueva cita telefónica». Elige un servicio: si solo tiene un profesional, se asigna automáticamente; si tiene varios, puedes elegir entre los compatibles.
 2. Elige un día laborable futuro y una hora. Solo se ofrecen intervalos donde cabe el servicio completo, dentro de 09:00–20:00 de lunes a viernes o 09:00–14:00 el sábado, con comienzos cada 30 minutos. Los domingos y el pasado no admiten citas. «Actualizar horas» permite repetir la consulta.
-3. Introduce datos de cliente ficticios para la prueba y pulsa «Crear cita telefónica». Elegir los campos no inserta nada. Se releen las reservas y se comprueba otra vez toda la duración antes de enviar.
+3. Introduce datos de cliente ficticios para la prueba y pulsa «Crear cita telefónica». Elegir los campos no inserta nada. Se releen las reservas y los bloqueos activos, y se comprueba otra vez toda la duración antes de enviar. Un bloqueo de última hora rechazado por el servidor se trata como un conflicto recuperable y conserva los datos del cliente.
 4. Tras «Cita telefónica creada.», el formulario se limpia y la agenda se actualiza. Abre la web pública, selecciona el mismo servicio, profesional y fecha, y vuelve a consultar: ese intervalo ya no debe ofrecerse. También hay refresco público cada 30 segundos mientras la página está visible.
 5. Para comprobar un conflicto, prepara el mismo horario en otra pestaña antes de guardarlo. Si el servidor rechaza el segundo intento, se muestra «Ese horario acaba de dejar de estar disponible.»; se actualizan las horas y se conservan los datos del formulario.
 
@@ -142,11 +152,59 @@ No envía `end_at`, `id`, `created_at` ni `status`, ni añade una lectura al INS
 
 1. En una cita confirmada pulsa «Cancelar cita». El diálogo identifica al cliente, servicio, fecha y hora. «Mantener cita» cierra el diálogo sin modificar nada.
 2. «Sí, cancelar cita» realiza `update({ status: 'cancelled' }).eq('id', id)` y comprueba que se actualizó la fila. **No elimina registros ni permite reactivarlos**.
-3. Tras «Cita cancelada.», la reserva aparece en el filtro «Canceladas». Vuelve a consultar esa fecha en la web pública: el intervalo estará libre si ninguna otra cita ocupa ese tiempo.
+3. Tras «Cita cancelada.», la reserva aparece en el filtro «Canceladas». Vuelve a consultar esa fecha en la web pública: el intervalo estará libre si ninguna otra cita o bloqueo ocupa ese tiempo.
 
 «Llamar» y «Enviar email» abren `tel:` y `mailto:`. No se envían avisos automáticamente al crear o cancelar.
 
-La agenda se refresca al pedirlo, después de crear/cancelar, al volver a la pestaña y cada 30 segundos mientras está visible. Las lecturas privadas están paginadas y rechazan resultados incompletos o inconsistentes; esta primera versión admite hasta 20.000 reservas en la consulta completa. No utiliza Realtime ni añade vacaciones, bloqueos, roles, pagos, SMS o correo automático.
+La agenda se refresca al pedirlo, después de crear/cancelar, al volver a la pestaña y cada 30 segundos mientras está visible. Las lecturas privadas están paginadas y rechazan resultados incompletos o inconsistentes; esta primera versión admite hasta 20.000 filas por consulta completa. No utiliza Realtime ni añade roles, pagos, SMS o correo automático.
+
+### Disponibilidad: ausencias, vacaciones y cierres
+
+En `admin.html`, inicia sesión y abre **Disponibilidad**. Esta sección usa la tabla existente `nova_blocks`, con las mismas comprobaciones de Auth y `nova_is_admin()` que el resto del panel. No modifica SQL, RLS ni triggers. No guarda bloqueos ni motivos en localStorage.
+
+| Necesidad | Selección en el formulario |
+| --- | --- |
+| Ausencia de unas horas | Selecciona a la persona, tipo **Ausencia**, la misma fecha de inicio y fin y las horas, por ejemplo 12:00–15:00. |
+| Un día de ausencia | Selecciona a la persona, **Ausencia**, la misma fecha de inicio y fin y activa **Día completo**. |
+| Vacaciones de varios días | Selecciona a la persona, **Vacaciones**, fecha inicial y última fecha de vacaciones; activa **Día completo**. |
+| Cerrar todo el salón | Selecciona **Todo el salón**, tipo **Cierre**, las fechas y las horas o **Día completo**. |
+| Otro periodo ocupado | Selecciona el alcance, tipo **Otro** y el periodo correspondiente. |
+
+El motivo es opcional, admite hasta 500 caracteres y solo aparece en el panel autenticado. Pulsa **Bloquear disponibilidad**. Si no afecta a citas existentes, se guarda el bloqueo, aparece «Disponibilidad actualizada.», se limpia el formulario y se actualizan las listas y las horas del panel.
+
+**Día completo incluye ambas fechas elegidas.** Por ejemplo, del 20 al 25 significa desde el día 20 a las 00:00 hasta el día 26 a las 00:00, siempre en Madrid. No se suman periodos fijos de 24 horas: `salon-time.js` convierte cada extremo por separado, contemplando días de 23 o 25 horas. Las horas inexistentes o ambiguas de los cambios de hora muestran un error para elegir otra; un final anterior o igual al inicio también se rechaza.
+
+#### Si hay citas afectadas
+
+Antes de crear se consultan únicamente las citas confirmadas que se solapan con el periodo y, si corresponde, con el profesional elegido. El diálogo muestra **«Este bloqueo afecta a X citas ya reservadas.»**, junto con fecha, hora, profesional, servicio y cliente.
+
+- **Volver:** conserva el formulario sin guardar el bloqueo ni modificar citas.
+- **Crear bloqueo igualmente:** vuelve a consultar las citas, guarda el bloqueo si el impacto sigue reconocido y mantiene todas las reservas intactas. Puedes contactar después con sus clientes desde **Agenda**.
+
+Si se detecta una cita nueva en la última comprobación, aparece otra vez el aviso para revisarla. La consulta y el INSERT son operaciones independientes: una reserva podría entrar en el intervalo entre ambas. El cliente no puede eliminar esa ventana sin una operación transaccional en el servidor; los triggers existentes siguen siendo la protección final para nuevas reservas. Este trabajo no los modifica.
+
+El INSERT de un bloqueo contiene exactamente:
+
+```text
+professional_id, start_at, end_at, kind, reason, active: true
+```
+
+`professional_id: null` significa todo el salón. `id`, `created_by` y `created_at` se dejan al servidor. No se actualiza ni cancela ninguna fila de `nova_bookings` al crear un bloqueo.
+
+#### Desactivar y comprobar el resultado
+
+En **Bloqueos activos**, cada tarjeta indica a quién afecta, tipo, periodo y motivo. Pulsa **Eliminar bloqueo** y confirma. Se ejecuta `update({ active: false }).eq('id', id)`, comprobando que se actualizó la fila. Se conserva el historial en Supabase; la lista solo muestra activos. Tras «Bloqueo eliminado.», el horario vuelve a estar libre si no queda otra reserva o bloqueo.
+
+Para probarlo, abre también `index.html` en otra pestaña:
+
+1. Bloquea un día de Laura. Consulta **Corte mujer** con «Cualquiera disponible»: María debe seguir apareciendo. Selecciona Laura: ese día debe quedar completo para ella.
+2. Crea vacaciones de Laura de varios días. Revisa **Balayage**: todos los días laborables de ese periodo deben quedar completos.
+3. Bloquea todo el salón durante un día: no debe quedar ningún hueco para ninguno de sus servicios.
+4. Prueba un bloqueo de Laura de 12:00 a 15:00 con **Color completo** (120 minutos). 10:00 puede terminar justo al inicio del bloqueo; 10:30 no puede ofrecerse. 15:00 vuelve a ser posible si no hay más ocupaciones y cabe antes del cierre.
+5. Desactiva el bloqueo y vuelve a consultar. Las horas libres deben reaparecer. Comprueba lo mismo en **Nueva cita telefónica**.
+6. Para probar el aviso, crea primero una cita con datos ficticios y después un bloqueo que la incluya: deberá pedir confirmación y la cita seguirá confirmada.
+
+Cambiar de fecha o profesional, recargar o esperar el refresco de la pestaña visible vuelve a consultar ambos conjuntos. En la web pública nunca se verá el motivo. Si falla la red al crear y se pierde la respuesta, el panel avisa del resultado incierto y bloquea repetir la creación hasta recargar; actualiza primero **Bloqueos activos** para comprobar si ya se guardó. Un fallo de lectura posterior a un guardado confirmado no borra la confirmación de éxito.
 
 ## Archivos y arquitectura
 
@@ -154,13 +212,13 @@ La agenda se refresca al pedirlo, después de crear/cancelar, al volver a la pes
 - `styles.css`: diseño original conservado en esta fase.
 - `data.js`: catálogo, profesionales, precios, duraciones, reseñas y correspondencias opcionales.
 - `salon-time.js`: conversión entre el horario de Madrid e instantes UTC.
-- `booking-core.js`: disponibilidad, validación y adaptador explícitamente local.
+- `booking-core.js`: motor común de disponibilidad con reservas y bloques separados, validación y adaptador explícitamente local.
 - `supabase-config.js`: las dos constantes públicas editables.
 - `supabase-repository.js`: selección de modo, cliente único y adaptador remoto.
 - `script.js`: interfaz compartida por ambos repositorios, estados de red y refrescos.
 - `admin.html` y `admin.css`: acceso y panel responsive independientes de la página pública.
-- `admin.js`: interfaz privada, filtros, formulario, confirmaciones y descarte de respuestas tras cerrar sesión.
-- `admin-repository.js`: operaciones Auth, comprobación de administrador, agenda privada y mutaciones autorizadas. Reutiliza `NovaStorage.createAdminContext()` y el motor existente.
+- `admin.js`: interfaz privada, filtros, citas telefónicas, editor de disponibilidad, avisos de impacto y descarte de respuestas tras cerrar sesión.
+- `admin-repository.js`: operaciones Auth, comprobación de administrador, agenda privada, bloques y mutaciones autorizadas. Reutiliza `NovaStorage.createAdminContext()` y el motor existente.
 - `tests/`: pruebas sin dependencias ni acceso a la base de datos real.
 
 La interfaz utiliza `NovaStorage.createRepository()`:
@@ -168,7 +226,12 @@ La interfaz utiliza `NovaStorage.createRepository()`:
 ```js
 const repository = NovaStorage.createRepository();
 repository.mode; // 'local' o 'supabase'
-await repository.listBookings({ startDate, endDate }); // fechas YYYY-MM-DD; fin exclusivo
+// Fechas YYYY-MM-DD y fin exclusivo. El modo remoto exige ambas lecturas.
+if (repository.mode === 'supabase') {
+  const { bookings, blocks } = await repository.listAvailability({ startDate, endDate });
+} else {
+  const bookings = await repository.listBookings(); // demo local, sin bloques administrativos
+}
 await repository.createBooking({
   serviceId, professionalId, date, start,
   customer: { name, phone, email }, source: 'online'
@@ -197,6 +260,6 @@ python3 tests/check_structure.py
 python3 tests/check_admin_structure.py
 ```
 
-Las pruebas cubren duración real, solapamientos, guardado y cancelación locales, permisos de columnas del adaptador, aislamiento de almacenamiento, estados asíncronos, conflictos, errores, paginación y cambios horarios. El panel añade pruebas de login, denegación de permisos, RPC antes de leer datos privados, logout, renovación de sesión, respuestas tardías, recuperación de navegación, filtros, payload telefónico, cancelación y liberación de disponibilidad pública. Los fixtures son independientes de la configuración real del proyecto.
+Las pruebas cubren duración real, solapamientos, guardado y cancelación locales, permisos de columnas del adaptador, aislamiento de almacenamiento, estados asíncronos, conflictos, errores, paginación y cambios horarios. El panel añade pruebas de login, denegación de permisos, RPC antes de leer datos privados, logout, renovación de sesión, respuestas tardías, recuperación de navegación, filtros, payload telefónico, cancelación y liberación de disponibilidad pública. Los bloqueos incluyen ausencias individuales, cierres globales, vacaciones, duración larga, «Cualquiera disponible», DST, creación/desactivación, advertencia de citas afectadas, `HORARIO_BLOQUEADO`, fallos de red y privacidad de los motivos. Los fixtures son independientes de la configuración real del proyecto.
 
 Las pruebas de interfaz utilizan un DOM mínimo y repositorios controlados: no sustituyen una comprobación visual/táctil en navegador ni validan Auth, RLS o reservas del proyecto Supabase real. Para comprobarlos, utiliza los pasos manuales anteriores con la cuenta administradora ya creada. Las suites no acceden a esa cuenta ni insertan reservas en la base de datos real.

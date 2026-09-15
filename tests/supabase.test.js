@@ -21,6 +21,7 @@
   var date = '2030-01-07';
   var range = { startDate: date, endDate: '2030-01-08' };
   var publicColumns = 'professional_id,start_at,end_at,status';
+  var publicBlockColumns = 'professional_id,start_at,end_at,active';
   var customer = { name: 'Álex Prueba', phone: '+34 612 345 678', email: 'alex@prueba.example' };
   function test(name, run) { tests.push({ name: name, run: run }); }
   function assert(value, message) { if (!value) throw new Error(message || 'Condición incorrecta.'); }
@@ -41,17 +42,23 @@
       end_at: NovaTime.toInstant(day || date, end).toISOString(), status: 'confirmed'
     };
   }
+  function block(professional, start, end, day) {
+    var result = row(professional, start, end, day);
+    delete result.status;
+    result.active = true;
+    return result;
+  }
   function setup(options) {
     options = options || {};
     readScript('supabase-repository.js');
-    var state = { rows: options.rows || [], calls: [], clients: [], reads: 0, inserts: 0 };
+    var state = { rows: options.rows || [], blocks: options.blocks || [], calls: [], clients: [], reads: 0, blockReads: 0, inserts: 0 };
     var sdk = {
       createClient: function (url, key, settings) {
         state.clients.push({ url: url, key: key, settings: settings });
         if (options.clientError) throw new Error('Detalle privado de inicialización');
         return {
           from: function (table) {
-            assert(table === 'nova_bookings', 'Consulta una tabla no autorizada.');
+            assert(table === 'nova_bookings' || table === 'nova_blocks', 'Consulta una tabla no autorizada.');
             var call = { table: table, filters: [], orders: [] };
             state.calls.push(call);
             var builder = {
@@ -70,6 +77,7 @@
               then: function (resolve, reject) {
                 return Promise.resolve().then(function () {
                   if (call.insert) {
+                    assert(table === 'nova_bookings', 'El público no puede escribir bloqueos.');
                     state.inserts += 1;
                     if (options.onInsert) return options.onInsert(call, state);
                     var service = NovaData.services.find(function (service) {
@@ -81,12 +89,14 @@
                     });
                     return { data: null, error: null, status: 201 };
                   }
-                  state.reads += 1;
-                  if (options.onRead) {
-                    var custom = options.onRead(call, state);
+                  if (table === 'nova_blocks') state.blockReads += 1;
+                  else state.reads += 1;
+                  var reader = table === 'nova_blocks' ? options.onBlockRead : options.onRead;
+                  if (reader) {
+                    var custom = reader(call, state);
                     if (custom !== undefined) return custom;
                   }
-                  var rows = state.rows.filter(function (row) {
+                  var rows = (table === 'nova_blocks' ? state.blocks : state.rows).filter(function (row) {
                     return call.filters.every(function (filter) {
                       if (filter[0] === 'eq') return row[filter[1]] === filter[2];
                       if (filter[0] === 'lt') return Date.parse(row[filter[1]]) < Date.parse(filter[2]);
@@ -111,9 +121,9 @@
   }
   function assertPublicReads(state) {
     state.calls.filter(function (call) { return call.select; }).forEach(function (call) {
-      equal(call.select, publicColumns);
+      equal(call.select, call.table === 'nova_blocks' ? publicBlockColumns : publicColumns);
       equal(call.settings, { count: 'exact' });
-      equal(call.filters[0], ['eq', 'status', 'confirmed']);
+      equal(call.filters[0], call.table === 'nova_blocks' ? ['eq', 'active', true] : ['eq', 'status', 'confirmed']);
       equal(call.orders.map(function (order) { return order[0]; }), ['start_at', 'professional_id', 'end_at']);
       assert(call.range, 'Falta paginación.');
     });
@@ -178,6 +188,106 @@
     equal(await state.repo.listBookings(range), [{ professionalId: 'carlos', date: date, start: 540, end: 570 }]);
     assertPublicReads(state);
     equal(state.calls[0].filters.slice(1), [['lt', 'start_at', '2030-01-07T23:00:00.000Z'], ['gt', 'end_at', '2030-01-06T23:00:00.000Z']]);
+  });
+  test('Disponibilidad consulta solo columnas públicas de bloqueos activos y separa sus intervalos', async function () {
+    var state = setup({ rows: [row('carlos', 540, 570)], blocks: [
+      Object.assign(block('laura', 720, 900), { reason: 'Motivo privado de salud', created_by: 'usuario-privado' }),
+      Object.assign(block('maria', 540, 630), { active: false }), block(null, 660, 690), block('carlos', 540, 570, '2030-01-08')
+    ] });
+    var result = await state.repo.listAvailability(range);
+    equal(result.bookings, [{ professionalId: 'carlos', date: date, start: 540, end: 570 }]);
+    equal(result.blocks, [{ professionalId: null, date: date, start: 660, end: 690 }, { professionalId: 'laura', date: date, start: 720, end: 900 }]);
+    assert(!JSON.stringify(result).includes('privado'));
+    equal(state.blockReads, 1);
+    assertPublicReads(state);
+    equal(state.calls.find(function (call) { return call.table === 'nova_blocks'; }).filters.slice(1), [
+      ['lt', 'start_at', '2030-01-07T23:00:00.000Z'], ['gt', 'end_at', '2030-01-06T23:00:00.000Z']
+    ]);
+  });
+  test('Bloqueos duplicados y solapados se paginan completos sin confundir duplicados legítimos', async function () {
+    var blocks = [];
+    for (var index = 0; index < 241; index += 1) blocks.push(block(null, 540, 600));
+    blocks.push(block('laura', 570, 630));
+    var state = setup({ blocks: blocks, serverPageLimit: 37 });
+    var result = await state.repo.listAvailability(range);
+    equal(result.blocks, [{ professionalId: null, date: date, start: 540, end: 600 }, { professionalId: 'laura', date: date, start: 570, end: 630 }]);
+    equal(state.blockReads, 7);
+    equal(state.calls.filter(function (call) { return call.table === 'nova_blocks'; })[1].range[0], 37);
+    assertPublicReads(state);
+  });
+  test('Vacaciones se recortan al rango y se dividen en días de Madrid', async function () {
+    var state = setup({ blocks: [{ professional_id: 'laura', start_at: '2030-01-06T22:00:00Z', end_at: '2030-01-09T11:00:00Z', active: true }] });
+    var result = await state.repo.listAvailability({ startDate: date, endDate: '2030-01-10' });
+    equal(result.blocks, [
+      { professionalId: 'laura', date: date, start: 0, end: 1440 },
+      { professionalId: 'laura', date: '2030-01-08', start: 0, end: 1440 },
+      { professionalId: 'laura', date: '2030-01-09', start: 0, end: 720 }
+    ]);
+    equal((await state.repo.listAvailability(range)).blocks, [result.blocks[0]]);
+  });
+  test('Un bloqueo completo en el cambio de hora cubre 24 horas civiles de Madrid', async function () {
+    for (var dateKey of ['2030-03-31', '2030-10-27']) {
+      var day = NovaTime.dayRange(dateKey);
+      var state = setup({ blocks: [{ professional_id: null, start_at: day.startAt, end_at: day.endAt, active: true }] });
+      var result = await state.repo.listAvailability({ startDate: dateKey, endDate: NovaTime.addDays(dateKey, 1) });
+      equal(result.blocks, [{ professionalId: null, date: dateKey, start: 0, end: 1440 }]);
+    }
+  });
+  test('Una lectura de bloqueos incompleta impide publicar horas y crear reservas', async function () {
+    var responses = [{ data: [], count: 1, status: 200 }, { data: [], count: null, status: 200 }, { data: [], count: 20001, status: 200 },
+      { error: { code: '42501', message: 'Motivo privado' }, status: 403 }];
+    for (var response of responses) {
+      var state = setup({ onBlockRead: function () { return response; } });
+      var expected = response.status === 403 ? 'CONFIG_ERROR' : 'CONNECTION_ERROR';
+      await rejects(function () { return state.repo.listAvailability(range); }, expected);
+      var error = await rejects(function () { return state.repo.createBooking(input()); }, expected);
+      assert(!error.message.includes('privado'));
+      equal(state.inserts, 0);
+    }
+    var changed = setup({ onBlockRead: function (_, state) {
+      return state.blockReads === 1 ? { data: [block('carlos', 540, 570)], count: 2, status: 200 } : { data: [], count: 1, status: 200 };
+    } });
+    await rejects(function () { return changed.repo.listAvailability(range); }, 'CONNECTION_ERROR');
+  });
+  test('Bloqueos malformados, inactivos inesperados o sin mapping fallan de forma cerrada', async function () {
+    for (var invalid of [Object.assign(block(null, 540, 570), { start_at: '2030-01-07T09:00:00' }),
+      Object.assign(block(null, 540, 570), { active: false }), block({}, 540, 570), block('carlos', 570, 540)]) {
+      var state = setup({ onBlockRead: function () { return { data: [invalid], count: 1, status: 200 }; } });
+      await rejects(function () { return state.repo.listAvailability(range); }, 'CONNECTION_ERROR');
+    }
+    var unknown = setup({ blocks: [block('profesional-desconocido', 540, 570)] });
+    await rejects(function () { return unknown.repo.listAvailability(range); }, 'CONFIG_ERROR');
+  });
+  test('Una nueva reserva relee bloques, respeta duración real y no inserta horarios bloqueados', async function () {
+    var state = setup({ blocks: [block('laura', 720, 900)] });
+    await rejects(function () { return state.repo.createBooking(input({ serviceId: 'color-completo', professionalId: 'laura', start: 630 })); }, 'SLOT_UNAVAILABLE');
+    equal(state.inserts, 0);
+    var booking = await state.repo.createBooking(input({ serviceId: 'color-completo', professionalId: 'laura', start: 600 }));
+    equal(booking.duration, 120);
+    assert(state.blockReads >= 2);
+    assertPublicReads(state);
+    var all = setup({ blocks: [block(null, 540, 1200)] });
+    await rejects(function () { return all.repo.createBooking(input()); }, 'SLOT_UNAVAILABLE');
+    equal(all.inserts, 0);
+  });
+  test('Desactivar bloqueos devuelve disponibilidad sin alterar reservas existentes', async function () {
+    var state = setup({ rows: [row('carlos', 600, 630)], blocks: [block(null, 540, 600)] });
+    var before = await state.repo.listAvailability(range);
+    assert(!NovaCore.getAvailability(Object.assign({ serviceId: 'corte-caballero', date: date, now: now }, before)).slots.some(function (slot) { return slot.start === 540; }));
+    state.blocks[0].active = false;
+    var after = await state.repo.listAvailability(range);
+    equal(after.blocks, []);
+    equal(after.bookings, before.bookings);
+    assert(NovaCore.getAvailability(Object.assign({ serviceId: 'corte-caballero', date: date, now: now }, after)).slots.some(function (slot) { return slot.start === 540; }));
+  });
+  test('HORARIO_BLOQUEADO se muestra de forma segura y pide elegir otro horario', async function () {
+    for (var error of [{ code: 'P0001', message: 'HORARIO_BLOQUEADO: Motivo privado' }, { code: 'HORARIO_BLOQUEADO', message: 'Motivo privado' }]) {
+      var state = setup({ onInsert: function () { return { error: error, status: 409 }; } });
+      var result = await rejects(function () { return state.repo.createBooking(input()); }, 'SLOT_UNAVAILABLE');
+      equal(result.message, 'Este horario acaba de dejar de estar disponible.');
+      equal(state.inserts, 1);
+      assertPublicReads(state);
+    }
   });
   test('Rangos de verano/invierno respetan las transiciones de Madrid', async function () {
     var state = setup();

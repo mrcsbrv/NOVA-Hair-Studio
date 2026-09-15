@@ -12,6 +12,7 @@
   var date = '2030-01-07';
   var customer = { name: 'Álex Prueba', phone: '+34 612 345 678', email: 'alex@prueba.example' };
   var columns = 'id,service_id,professional_id,start_at,end_at,customer_name,customer_phone,customer_email,source,status,created_at';
+  var blockColumns = 'id,professional_id,start_at,end_at,kind,reason,active';
   function test(name, run) { tests.push({ name: name, run: run }); }
   function assert(value, message) { if (!value) throw new Error(message || 'Condición incorrecta.'); }
   function equal(actual, expected) { if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error('Resultado distinto.'); }
@@ -32,11 +33,19 @@
       status: 'confirmed', source: 'online', created_at: '2030-01-06T10:00:00Z'
     }, extra || {});
   }
+  function blockInput(overrides) {
+    return Object.assign({ professionalId: 'laura', kind: 'absence', startDate: date, startTime: '12:00',
+      endDate: date, endTime: '15:00', reason: 'Motivo privado de prueba', allDay: false }, overrides || {});
+  }
+  function blockRow(id, overrides) {
+    return Object.assign({ id: id, professional_id: 'laura', start_at: NovaTime.toInstant(date, 720).toISOString(),
+      end_at: NovaTime.toInstant(date, 900).toISOString(), kind: 'absence', reason: 'Motivo privado de prueba', active: true }, overrides || {});
+  }
   function setup(options) {
     options = options || {};
     readScript('supabase-repository.js'); readScript('admin-repository.js');
     var state = {
-      rows: options.rows || [], session: options.session === undefined ? session() : options.session,
+      rows: options.rows || [], blocks: options.blocks || [], session: options.session === undefined ? session() : options.session,
       admin: options.admin === undefined ? true : options.admin, clients: [], calls: [], events: [], callbacks: [],
       signouts: 0, reads: 0, inserts: 0, updates: 0, rpc: 0, privateAllowed: false
     };
@@ -73,8 +82,8 @@
           return Promise.resolve({ data: state.admin, status: 200, error: null });
         },
         from: function (table) {
-          equal(table, 'nova_bookings');
-          var call = { filters: [], orders: [] }; state.calls.push(call);
+          assert(table === 'nova_bookings' || table === 'nova_blocks', 'Tabla inesperada.');
+          var call = { table: table, filters: [], orders: [] }; state.calls.push(call);
           var builder = {
             select: function (selection, settings) { assert(!call.insert, 'INSERT devuelve columnas.'); call.select = selection; call.settings = settings; return builder; },
             insert: function (payload) { call.insert = payload; return builder; },
@@ -88,10 +97,14 @@
             abortSignal: function () { return builder; },
             then: function (resolve, reject) {
               return Promise.resolve().then(function () {
-                if (call.select === columns || call.insert || call.update) assert(state.privateAllowed, 'Operación privada antes de Auth y RPC true.');
+                if (call.select === columns || call.select === blockColumns || call.insert || call.update) assert(state.privateAllowed, 'Operación privada antes de Auth y RPC true.');
                 if (call.insert) {
                   state.inserts += 1;
                   if (options.onInsert) return options.onInsert(call, state);
+                  if (table === 'nova_blocks') {
+                    state.blocks.push(Object.assign({ id: 'block-created-' + state.inserts }, call.insert));
+                    return { data: null, error: null, status: 201 };
+                  }
                   var service = NovaData.services.find(function (item) { return (item.supabaseId === undefined ? item.id : item.supabaseId) === call.insert.service_id; });
                   state.rows.push(Object.assign({}, call.insert, {
                     id: 'created-' + state.inserts, status: 'confirmed', created_at: now.toISOString(),
@@ -102,13 +115,13 @@
                 if (call.update) {
                   state.updates += 1;
                   if (options.onUpdate) return options.onUpdate(call, state);
-                  var matching = state.rows.filter(function (item) { return String(item.id) === String(call.filters[0][2]); });
-                  matching.forEach(function (item) { item.status = call.update.status; });
+                  var matching = (table === 'nova_blocks' ? state.blocks : state.rows).filter(function (item) { return String(item.id) === String(call.filters[0][2]); });
+                  matching.forEach(function (item) { Object.assign(item, call.update); });
                   return { data: matching.map(function (item) { return { id: item.id }; }), status: 200, error: null };
                 }
                 state.events.push('read'); state.reads += 1;
                 if (options.onRead) { var custom = options.onRead(call, state); if (custom !== undefined) return custom; }
-                var rows = state.rows.filter(function (item) {
+                var rows = (table === 'nova_blocks' ? state.blocks : state.rows).filter(function (item) {
                   return call.filters.every(function (filter) {
                     if (filter[0] === 'eq') return item[filter[1]] === filter[2];
                     if (filter[0] === 'lt') return Date.parse(item[filter[1]]) < Date.parse(filter[2]);
@@ -316,6 +329,159 @@
       assert(!error.message.includes('privado@')); equal(state.calls.length, 0);
       var authorized = setup(); await authorized.repo.createPhoneBooking(input()); await authorized.repo.listBookings(); equal(touches, 0);
     } finally { if (descriptor) Object.defineProperty(globalThis, 'localStorage', descriptor); else delete globalThis.localStorage; }
+  });
+
+  test('Bloqueos privados exigen sesión y RPC antes de cualquier lectura o cambio', async function () {
+    var state = setup({ session: null });
+    for (var operation of [function () { return state.repo.listBlocks(); }, function () { return state.repo.prepareBlock(blockInput()); },
+      function () { return state.repo.createBlock(blockInput()); }, function () { return state.repo.deactivateBlock('b'); }]) {
+      await rejects(operation, 'AUTH_REQUIRED');
+    }
+    equal(state.calls.length, 0);
+    var denied = setup({ admin: false });
+    await rejects(function () { return denied.repo.createBlock(blockInput()); }, 'FORBIDDEN');
+    equal(denied.calls.length, 0); equal(denied.signouts, 1);
+  });
+  test('Bloqueos activos usan columnas privadas precisas, paginación y profesional nulo', async function () {
+    var state = setup({ blocks: [blockRow('a'), blockRow('b', { professional_id: null, kind: 'closed', reason: null }),
+      blockRow('c', { active: false })], pageLimit: 1 });
+    var blocks = await state.repo.listBlocks();
+    equal(blocks.length, 2); equal(blocks[1].professionalId, null); equal(blocks[1].reason, '');
+    equal(blocks[0].reason, 'Motivo privado de prueba');
+    equal(state.calls[0].select, blockColumns); equal(state.calls[0].filters, [['eq', 'active', true]]);
+    equal(state.calls[0].settings, { count: 'exact' }); equal(state.calls[0].orders, ['start_at', 'id']);
+    equal(state.calls[1].range[0], 1);
+  });
+  test('Paginación y datos inválidos de bloques fallan sin devolver disponibilidad parcial', async function () {
+    for (var override of [{ professional_id: 'desconocido' }, { start_at: '2030-01-07T12:00:00' },
+      { end_at: '2030-01-07T08:00:00Z' }, { kind: 'inventado' }]) {
+      var state = setup({ blocks: [blockRow('a', override)] });
+      await rejects(function () { return state.repo.listBlocks(); }, override.professional_id ? 'CONFIG_ERROR' : 'CONNECTION_ERROR');
+    }
+    var duplicate = setup({ onRead: function () { return { data: [blockRow('a')], count: 2, status: 200 }; } });
+    await rejects(function () { return duplicate.repo.listBlocks(); }, 'CONNECTION_ERROR');
+  });
+  test('Logout descarta listas de motivos y advertencias de citas afectadas en vuelo', async function () {
+    for (var operation of ['listBlocks', 'prepareBlock']) {
+      var pending = deferred(); var started = deferred();
+      var state = setup({ onRead: function () { started.resolve(); return pending.promise; } });
+      state.repo.onAuthStateChange(function () {});
+      var reading = operation === 'listBlocks' ? state.repo.listBlocks() : state.repo.prepareBlock(blockInput());
+      await started.promise; await state.repo.signOut();
+      pending.resolve({ data: [operation === 'listBlocks' ? blockRow('a') : row('a', 'laura', 720)], count: 1, status: 200 });
+      await rejects(function () { return reading; }, 'AUTH_REQUIRED');
+      equal(state.inserts, 0);
+    }
+  });
+  test('Crear ausencia envía exactamente seis campos y nunca escribe citas existentes', async function () {
+    var state = setup(); var result = await state.repo.createBlock(blockInput());
+    equal(result.id, undefined); equal(result.active, true); equal(state.inserts, 1); equal(state.updates, 0);
+    var write = state.calls.find(function (call) { return call.insert; });
+    equal(write.table, 'nova_blocks'); equal(Object.keys(write.insert).sort(), ['active', 'end_at', 'kind', 'professional_id', 'reason', 'start_at']);
+    equal(write.insert.start_at, '2030-01-07T11:00:00.000Z'); equal(write.insert.end_at, '2030-01-07T14:00:00.000Z');
+    equal(write.insert.active, true); equal(write.retry, false); equal(write.select, undefined);
+  });
+  test('Día completo y vacaciones incluyen el último día y respetan los cambios de hora de Madrid', async function () {
+    var state = setup();
+    for (var entry of [
+      { startDate: '2030-03-31', endDate: '2030-03-31', start: '2030-03-30T23:00:00.000Z', end: '2030-03-31T22:00:00.000Z' },
+      { startDate: '2030-10-27', endDate: '2030-10-27', start: '2030-10-26T22:00:00.000Z', end: '2030-10-27T23:00:00.000Z' },
+      { startDate: '2030-09-20', endDate: '2030-09-25', start: '2030-09-19T22:00:00.000Z', end: '2030-09-25T22:00:00.000Z' }
+    ]) {
+      var created = await state.repo.createBlock(blockInput({ professionalId: null, kind: 'vacation', allDay: true,
+        startDate: entry.startDate, endDate: entry.endDate, startTime: '', endTime: '' }));
+      equal(created.startAt, entry.start); equal(created.endAt, entry.end); equal(created.professionalId, null);
+    }
+  });
+  test('Validación de bloques muestra campos y rechaza horas inexistentes o ambiguas', async function () {
+    var state = setup();
+    for (var item of [
+      [{ professionalId: '' }, 'professionalId'], [{ kind: 'inventado' }, 'kind'], [{ startDate: '2030-02-30' }, 'startDate'],
+      [{ endDate: '2030-01-06' }, 'endDate'], [{ endTime: '12:00' }, 'endDate'], [{ startTime: '24:00' }, 'startTime'],
+      [{ endTime: '9:00' }, 'endTime'], [{ reason: 'x'.repeat(501) }, 'reason'],
+      [{ startDate: '2030-03-31', endDate: '2030-03-31', startTime: '02:30' }, 'startTime'],
+      [{ startDate: '2030-10-27', endDate: '2030-10-27', startTime: '02:30' }, 'startTime']
+    ]) {
+      var error = await rejects(function () { return state.repo.prepareBlock(blockInput(item[0])); }, 'BLOCK_VALIDATION_ERROR');
+      assert(error.fields[item[1]], 'Falta error del campo ' + item[1]);
+    }
+    equal(state.calls.length, 0); equal(state.inserts, 0);
+  });
+  test('La advertencia solo contiene citas confirmadas solapadas del profesional o del salón', async function () {
+    var state = setup({ rows: [row('before', 'laura', 690), row('inside', 'laura', 750), row('after', 'laura', 900),
+      row('cancelled', 'laura', 750, 30, { status: 'cancelled' }), row('other', 'maria', 750)] });
+    var prepared = await state.repo.prepareBlock(blockInput());
+    equal(prepared.affectedBookings.map(function (booking) { return booking.id; }), ['inside']);
+    equal(prepared.affectedBookings[0].customer.name, customer.name); equal(state.inserts, 0); equal(state.updates, 0);
+    var allSalon = await state.repo.prepareBlock(blockInput({ professionalId: null }));
+    equal(allSalon.affectedBookings.length, 2);
+    var error = await rejects(function () { return state.repo.createBlock(prepared.block); }, 'AFFECTED_BOOKINGS');
+    equal(error.affectedBookings.length, 1); equal(error.block.professionalId, 'laura'); equal(state.inserts, 0);
+    await state.repo.createBlock(prepared.block, { acknowledgedBookingIds: ['inside'] });
+    equal(state.inserts, 1); equal(state.updates, 0);
+    equal(state.rows.find(function (booking) { return booking.id === 'inside'; }).status, 'confirmed');
+  });
+  test('Una nueva cita después de preparar el bloqueo obliga a confirmar otra vez', async function () {
+    var state = setup({ rows: [row('a', 'laura', 750)] });
+    var prepared = await state.repo.prepareBlock(blockInput());
+    state.rows.push(row('b', 'laura', 810));
+    var error = await rejects(function () { return state.repo.createBlock(prepared.block, { acknowledgedBookingIds: ['a'] }); }, 'AFFECTED_BOOKINGS');
+    equal(error.affectedBookings.map(function (booking) { return booking.id; }), ['a', 'b']); equal(state.inserts, 0);
+    await state.repo.createBlock(error.block, { acknowledgedBookingIds: ['a', 'b'] });
+    equal(state.inserts, 1); equal(state.updates, 0); equal(state.rows.length, 2);
+  });
+  test('La cita telefónica respeta bloqueos parciales, duración completa y cualquier profesional', async function () {
+    var state = setup({ blocks: [blockRow('a')] });
+    var laura = input({ serviceId: 'color-completo', professionalId: 'laura' });
+    var available = await state.repo.getAvailability(laura);
+    assert(available.slots.some(function (slot) { return slot.start === 600; }));
+    assert(!available.slots.some(function (slot) { return slot.start === 630; }));
+    assert(available.slots.some(function (slot) { return slot.start === 900; }));
+    await rejects(function () { return state.repo.createPhoneBooking(Object.assign({}, laura, { start: 630 })); }, 'SLOT_UNAVAILABLE');
+    equal(state.inserts, 0);
+    var any = await state.repo.getAvailability(input({ serviceId: 'corte-mujer', professionalId: 'any' }));
+    assert(any.slots.some(function (slot) { return slot.start === 750 && slot.professionalId === 'maria'; }));
+    assert(!any.slots.some(function (slot) { return slot.start === 750 && slot.professionalId === 'laura'; }));
+    await state.repo.createPhoneBooking(Object.assign({}, laura, { start: 900 })); equal(state.inserts, 1);
+  });
+  test('Todo el salón bloqueado y vacaciones impiden nuevas citas telefónicas', async function () {
+    var state = setup({ blocks: [blockRow('a', { professional_id: null, kind: 'vacation',
+      start_at: NovaTime.dayRange(date).startAt, end_at: NovaTime.dayRange('2030-01-10').startAt })] });
+    for (var person of ['laura', 'maria', 'carlos']) {
+      var serviceId = person === 'carlos' ? 'corte-caballero' : 'corte-mujer';
+      equal((await state.repo.getAvailability(input({ professionalId: person, serviceId: serviceId }))).status, 'full');
+    }
+    await rejects(function () { return state.repo.createPhoneBooking(input({ date: '2030-01-09' })); }, 'SLOT_UNAVAILABLE');
+    equal(state.inserts, 0);
+  });
+  test('HORARIO_BLOQUEADO del servidor se convierte en conflicto de cita telefónica sin exponer detalles', async function () {
+    var state = setup({ onInsert: function () { return { error: { code: 'P0001', message: 'HORARIO_BLOQUEADO: motivo privado' }, status: 400 }; } });
+    var error = await rejects(function () { return state.repo.createPhoneBooking(input()); }, 'SLOT_UNAVAILABLE');
+    equal(error.message, 'Ese horario acaba de dejar de estar disponible.'); equal(state.inserts, 1);
+  });
+  test('Desactivar conserva historial y libera disponibilidad sin tocar reservas', async function () {
+    var state = setup({ blocks: [blockRow('a', { professional_id: 'carlos', start_at: NovaTime.toInstant(date, 540).toISOString() })] });
+    assert(!(await state.repo.getAvailability(input())).slots.some(function (slot) { return slot.start === 540; }));
+    await state.repo.deactivateBlock('a');
+    equal(state.blocks.length, 1); equal(state.blocks[0].active, false); equal(await state.repo.listBlocks(), []);
+    var update = state.calls.find(function (call) { return call.update; });
+    equal(update.table, 'nova_blocks'); equal(update.update, { active: false }); equal(update.filters, [['eq', 'id', 'a']]);
+    equal(update.select, 'id'); equal(update.retry, false);
+    assert((await state.repo.getAvailability(input())).slots.some(function (slot) { return slot.start === 540; }));
+    readScript('supabase-repository.js');
+    var publicRepo = NovaStorage.createRepository(state.settings);
+    var availability = await publicRepo.listAvailability({ startDate: date, endDate: '2030-01-08' });
+    equal(availability.blocks, []);
+    assert(NovaCore.getAvailability(Object.assign(input(), availability, { now: now })).slots.some(function (slot) { return slot.start === 540; }));
+  });
+  test('Desactivar cero filas o perder la respuesta nunca produce un éxito falso', async function () {
+    var state = setup({ onUpdate: function () { return { data: [], error: null, status: 200 }; } });
+    await rejects(function () { return state.repo.deactivateBlock('a'); }, 'BLOCK_NOT_ALLOWED');
+    var lost = setup({ onInsert: function () { throw new Error('Motivo privado'); } });
+    var error = await rejects(function () { return lost.repo.createBlock(blockInput()); }, 'BLOCK_UNCERTAIN');
+    assert(!error.message.includes('Motivo privado')); equal(lost.inserts, 1);
+    var lostUpdate = setup({ onUpdate: function () { throw new Error('Motivo privado'); } });
+    await rejects(function () { return lostUpdate.repo.deactivateBlock('a'); }, 'BLOCK_UNCERTAIN'); equal(lostUpdate.updates, 1);
   });
 
   (async function () {

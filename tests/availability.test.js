@@ -81,6 +81,47 @@
     assert(!core.overlaps(540, 600, 600, 630));
     assert(!core.overlaps(630, 660, 600, 630));
   });
+  test('Un bloqueo de Laura conserva María en Cualquiera disponible', function () {
+    var blocks = [{ professionalId: 'laura', date: monday, start: 0, end: 1440 }];
+    var combined = availability('corte-mujer', [], { blocks: blocks });
+    equal(combined.status, 'available');
+    assert(combined.slots.every(function (slot) { return slot.professionalId === 'maria'; }));
+    equal(availability('corte-mujer', [], { professionalId: 'laura', blocks: blocks }).status, 'full');
+    assert(hasSlot(availability('corte-mujer', [], { professionalId: 'maria', blocks: blocks }), 540));
+  });
+  test('Un bloqueo de todo el salón deja completos todos los servicios', function () {
+    var blocks = [{ professionalId: null, date: monday, start: 0, end: 1440 }];
+    data.services.forEach(function (service) { equal(availability(service.id, [], { blocks: blocks }).status, 'full'); });
+  });
+  test('Un bloqueo parcial permite citas contiguas y exige 120 minutos completamente libres', function () {
+    var blocks = [{ professionalId: 'laura', date: monday, start: 720, end: 900 }];
+    var result = availability('color-completo', [], { professionalId: 'laura', blocks: blocks });
+    assert(hasSlot(result, 540) && hasSlot(result, 600)); // Termina exactamente a las 12:00.
+    assert(!hasSlot(result, 630) && !hasSlot(result, 690) && !hasSlot(result, 870));
+    assert(hasSlot(result, 900) && hasSlot(result, 1080));
+  });
+  test('Vacaciones separadas por fecha afectan todos sus días y no el siguiente', function () {
+    var blocks = [monday, tuesday, '2030-01-09'].map(function (date) { return { professionalId: 'laura', date: date, start: 0, end: 1440 }; });
+    [monday, tuesday, '2030-01-09'].forEach(function (date) { equal(availability('balayage', [], { date: date, blocks: blocks }).status, 'full'); });
+    equal(availability('balayage', [], { date: '2030-01-10', blocks: blocks }).status, 'available');
+  });
+  test('Liberar un bloqueo conserva otras reservas y bloqueos solapados', function () {
+    var booking = { professionalId: 'carlos', date: monday, start: 600, end: 630 };
+    var blocks = [{ professionalId: null, date: monday, start: 540, end: 690 }, { professionalId: 'carlos', date: monday, start: 660, end: 720 }];
+    assert(!hasSlot(availability('corte-caballero', [booking], { blocks: blocks }), 540));
+    blocks.shift();
+    var result = availability('corte-caballero', [booking], { blocks: blocks });
+    assert(hasSlot(result, 540));
+    assert(!hasSlot(result, 600) && !hasSlot(result, 660));
+    assert(hasSlot(result, 720));
+    equal(booking.end, 630);
+  });
+  test('Los mensajes públicos no propagan motivos privados de los bloques', function () {
+    var result = availability('peinado', [], { blocks: [{ professionalId: 'maria', date: monday, start: 540, end: 1200, reason: 'Motivo privado de salud' }] });
+    equal(result.status, 'full');
+    assert(!JSON.stringify(result).includes('privado'));
+    assert(result.unavailable.every(function (slot) { return slot.reason === 'Ocupado'; }));
+  });
   test('Servicio de 30 minutos ofrece todo el intervalo libre hasta el cierre', function () {
     var result = availability('corte-caballero');
     equal(result.status, 'available');

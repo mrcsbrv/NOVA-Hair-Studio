@@ -6,6 +6,7 @@
   var time = global.NovaTime;
   var data = global.NovaData;
   var PUBLIC_COLUMNS = 'professional_id,start_at,end_at,status';
+  var PUBLIC_BLOCK_COLUMNS = 'professional_id,start_at,end_at,active';
   var PAGE_SIZE = 200;
   var MAX_ROWS = 20000;
   var REQUEST_TIMEOUT = 15000;
@@ -30,7 +31,7 @@
   }
 
   function unavailableError() {
-    return fail('SLOT_UNAVAILABLE', 'Esta hora acaba de dejar de estar disponible. Elige otra para continuar.');
+    return fail('SLOT_UNAVAILABLE', 'Este horario acaba de dejar de estar disponible.');
   }
 
   function uncertainError() {
@@ -41,7 +42,7 @@
   function serverError(error, status, mutation) {
     var code = error && String(error.code || '');
     var message = error && typeof error.message === 'string' ? error.message.toLowerCase() : '';
-    if (code === '23P01' || (code === 'P0001' && /overlap|solap|not available|unavailable|no (?:est[aá] )?disponible|no (?:est[aá] )?libre|past|pasad[oa]|already booked|ya reservad/.test(message))) {
+    if (code === '23P01' || code === 'HORARIO_BLOQUEADO' || (code === 'P0001' && /horario_bloqueado|overlap|solap|not available|unavailable|no (?:est[aá] )?disponible|no (?:est[aá] )?libre|past|pasad[oa]|already booked|ya reservad/.test(message))) {
       return unavailableError();
     }
     if (status === 401 || status === 403 || ['42501', '42P01', '42703', 'PGRST204', 'PGRST301', 'PGRST302'].indexOf(code) !== -1) {
@@ -167,16 +168,15 @@
     return matches[0].id;
   }
 
-  function intervalRows(row, range) {
+  function splitInterval(row, range, professionalId) {
     var startAt = row && new Date(row.start_at);
     var endAt = row && new Date(row.end_at);
     // Sin offset explícito, Date interpretaría la hora en la zona del dispositivo y abriría huecos incorrectos.
     var timestampWithZone = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
-    if (!row || row.status !== 'confirmed' || normalizedId(row.professional_id) === null ||
+    if (!row ||
       typeof row.start_at !== 'string' || typeof row.end_at !== 'string' ||
       !timestampWithZone.test(row.start_at) || !timestampWithZone.test(row.end_at) ||
       !Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime()) || startAt >= endAt) throw connectionError();
-    var professionalId = professionalFromDatabase(row.professional_id);
     var firstDate = time.dateKey(startAt);
     var lastDate = time.dateKey(endAt);
     var cursor = firstDate < range.startDate ? range.startDate : firstDate;
@@ -191,6 +191,16 @@
       cursor = time.addDays(cursor, 1);
     }
     return result;
+  }
+
+  function intervalRows(row, range) {
+    if (!row || row.status !== 'confirmed' || normalizedId(row.professional_id) === null) throw connectionError();
+    return splitInterval(row, range, professionalFromDatabase(row.professional_id));
+  }
+
+  function blockRows(row, range) {
+    if (!row || row.active !== true || (row.professional_id !== null && normalizedId(row.professional_id) === null)) throw connectionError();
+    return splitInterval(row, range, row.professional_id === null ? null : professionalFromDatabase(row.professional_id));
   }
 
   function createRemoteRepository(config, options) {
@@ -255,6 +265,47 @@
       }
     }
 
+    async function listBlocks(range) {
+      try {
+        var supabase = client();
+        validateMappings();
+        var bounds = validateRange(range);
+        var rows = [];
+        var expectedCount = null;
+        while (true) {
+          var response = await execute(supabase.from('nova_blocks').select(PUBLIC_BLOCK_COLUMNS, { count: 'exact' })
+            .eq('active', true).lt('start_at', bounds.end).gt('end_at', bounds.start)
+            .order('start_at', { ascending: true }).order('professional_id', { ascending: true, nullsFirst: true }).order('end_at', { ascending: true })
+            .range(rows.length, rows.length + PAGE_SIZE - 1), false);
+          if (!Array.isArray(response.data) || !Number.isInteger(response.count) || response.count < 0 || response.count > MAX_ROWS) throw connectionError();
+          if (expectedCount === null) expectedCount = response.count;
+          if (response.count !== expectedCount || rows.length + response.data.length > expectedCount) throw connectionError();
+          rows = rows.concat(response.data);
+          if (rows.length === expectedCount) break;
+          if (!response.data.length) throw connectionError();
+        }
+        var seen = new Set();
+        return rows.reduce(function (blocks, row) {
+          // Dos bloques administrativos pueden cubrir exactamente el mismo intervalo.
+          // La paginación cuenta todas las filas; solo se deduplica su efecto público.
+          blockRows(row, range).forEach(function (interval) {
+            var signature = JSON.stringify([interval.professionalId, interval.date, interval.start, interval.end]);
+            if (!seen.has(signature)) { seen.add(signature); blocks.push(interval); }
+          });
+          return blocks;
+        }, []);
+      } catch (error) {
+        if (error && safeErrors.has(error)) throw error;
+        throw connectionError();
+      }
+    }
+
+    async function listAvailability(range) {
+      // Una lectura parcial jamás se publica como disponibilidad completa.
+      var result = await Promise.all([listBookings(range), listBlocks(range)]);
+      return { bookings: result[0], blocks: result[1] };
+    }
+
     async function createBooking(input) {
       var mutationStarted = false;
       try {
@@ -274,8 +325,8 @@
         if (input.source && input.source !== 'online') throw fail('ADMIN_DISABLED', 'Las citas telefónicas se gestionan únicamente desde una agenda privada.');
         validateMappings();
         var range = { startDate: input.date, endDate: time.addDays(input.date, 1) };
-        var bookings = await listBookings(range);
-        var availability = core.getAvailability({ serviceId: service.id, professionalId: person.id, date: input.date, bookings: bookings, now: clock() });
+        var occupied = await listAvailability(range);
+        var availability = core.getAvailability({ serviceId: service.id, professionalId: person.id, date: input.date, bookings: occupied.bookings, blocks: occupied.blocks, now: clock() });
         if (!availability.slots.some(function (slot) { return slot.start === input.start && slot.professionalId === person.id; })) throw unavailableError();
         var customer = {
           name: input.customer.name.trim().replace(/\s+/g, ' '), phone: input.customer.phone.trim(), email: input.customer.email.trim().toLowerCase()
@@ -317,7 +368,7 @@
     }
 
     return {
-      mode: 'supabase', listBookings: listBookings, createBooking: createBooking,
+      mode: 'supabase', listBookings: listBookings, listAvailability: listAvailability, createBooking: createBooking,
       cancelBooking: adminDisabled, resetDemo: adminDisabled,
       subscribe: function (callback) {
         if (typeof callback !== 'function') throw new TypeError('El observador de agenda debe ser una función.');
@@ -354,7 +405,7 @@
       client: function () { return getClient(config, options.sdk || global.supabase, 'admin'); },
       execute: function (query, mutation) { return execute(query, mutation, true); },
       databaseId: databaseId, normalizedId: normalizedId,
-      validateMappings: validateMappings, intervalRows: intervalRows,
+      validateMappings: validateMappings, intervalRows: intervalRows, blockRows: blockRows,
       professionalFromDatabase: professionalFromDatabase,
       isSafeError: function (error) { return !!error && safeErrors.has(error); }
     };

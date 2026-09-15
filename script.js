@@ -24,7 +24,7 @@
     return new Date(now.year, now.month - 1, 1);
   };
   const state = {
-    bookings: [], serviceId: '', professionalId: 'any', date: '', slot: null,
+    bookings: [], blocks: [], serviceId: '', professionalId: 'any', date: '', slot: null,
     month: firstOfMonth(), stage: 'selection', customer: null, confirmed: null,
     busy: false, storageReady: false, loading: false, requestId: 0,
     availabilityError: false, uncertain: false
@@ -34,7 +34,7 @@
   const selectedService = () => serviceById(state.serviceId);
   const availability = (date = state.date, overrides = {}) => core.getAvailability({
     serviceId: state.serviceId, professionalId: state.professionalId,
-    date, bookings: state.bookings, ...overrides
+    date, bookings: state.bookings, blocks: state.blocks, ...overrides
   });
 
   function announce(message, target = 'booking-status', error = false) {
@@ -320,7 +320,7 @@
     updateAvailabilityControls();
     $('confirm-booking').textContent = 'Confirmando…';
     try {
-      // El repositorio relee la agenda y comprueba TODO el intervalo al guardar.
+      // El repositorio relee reservas y bloqueos y comprueba TODO el intervalo al guardar.
       const booking = await repository.createBooking(candidateBooking());
       state.confirmed = booking;
       state.stage = 'success';
@@ -343,7 +343,7 @@
         state.stage = 'selection';
         await refreshData(false);
         updateProgress();
-        announce('La hora elegida ya no está disponible. Selecciona otro hueco para continuar.', 'booking-status', true);
+        announce(remote ? 'Este horario acaba de dejar de estar disponible.' : 'La hora elegida ya no está disponible. Selecciona otro hueco para continuar.', 'booking-status', true);
         focusElement($('slots-title'));
       } else if (remote && error.code === 'BOOKING_UNCERTAIN') {
         // Un corte de conexión tras enviar el INSERT no demuestra que este fallara.
@@ -515,9 +515,14 @@
       updateAvailabilityControls();
     }
     try {
-      const bookings = await repository.listBookings(remote ? range : undefined);
+      const occupied = remote ? await repository.listAvailability(range)
+        : { bookings: await repository.listBookings(), blocks: [] };
+      if (!occupied || !Array.isArray(occupied.bookings) || !Array.isArray(occupied.blocks)) {
+        throw new Error('No se pudo comprobar toda la disponibilidad.');
+      }
       if (requestId !== state.requestId) return false;
-      state.bookings = bookings;
+      state.bookings = occupied.bookings;
+      state.blocks = occupied.blocks;
       state.storageReady = true;
       state.loading = false;
       state.availabilityError = false;
@@ -539,7 +544,7 @@
       state.storageReady = false;
       state.loading = false;
       state.availabilityError = true;
-      if (remote) state.bookings = [];
+      if (remote) { state.bookings = []; state.blocks = []; }
       state.slot = null;
       if (state.stage === 'review' && !state.uncertain) state.stage = 'selection';
       // Un fallo de lectura puede ocurrir después de un guardado correcto.

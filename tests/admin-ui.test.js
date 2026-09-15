@@ -40,14 +40,44 @@ function row(id = 'prueba-1', overrides = {}) {
   base.endAt = NovaTime.toInstant(base.date, base.end).toISOString();
   return base;
 }
+function blockRow(id = 'bloque-prueba', overrides = {}) {
+  return {
+    id, professionalId: 'laura', kind: 'absence', reason: 'Motivo privado de prueba', active: true,
+    startAt: NovaTime.toInstant(futureDate(), 720).toISOString(),
+    endAt: NovaTime.toInstant(futureDate(), 900).toISOString(), ...overrides
+  };
+}
+function normalizedBlock(input) {
+  const minute = value => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
+  return {
+    ...input, professionalId: input.professionalId === 'all' ? null : input.professionalId,
+    startAt: NovaTime.toInstant(input.startDate, input.allDay ? 0 : minute(input.startTime)).toISOString(),
+    endAt: NovaTime.toInstant(input.allDay ? NovaTime.addDays(input.endDate, 1) : input.endDate, input.allDay ? 0 : minute(input.endTime)).toISOString(), active: true
+  };
+}
+function blockIntervals(blocks, date) {
+  const range = NovaTime.dayRange(date);
+  const minute = value => {
+    const parts = NovaTime.parts(new Date(value));
+    return parts.hour * 60 + parts.minute + parts.second / 60;
+  };
+  return blocks.filter(item => item.active && item.startAt < range.endAt && item.endAt > range.startAt).map(item => ({
+    professionalId: item.professionalId, date,
+    start: item.startAt <= range.startAt ? 0 : minute(item.startAt),
+    end: item.endAt >= range.endAt ? 1440 : minute(item.endAt)
+  }));
+}
 function fakeRepository(options = {}) {
   let observer;
   let allowed = false;
   const repo = {
-    session: options.session || null, rows: options.rows || [], permitted: options.permitted !== false,
+    session: options.session || null, rows: options.rows || [], blocks: options.blocks || [], permitted: options.permitted !== false,
     reads: 0, rpcs: 0, signouts: 0, creates: [], cancellations: [], pending: [], pendingTimes: [],
     readError: null, createError: null, cancelError: null, authError: options.authError,
     deferRead: false, deferTimes: false, pendingSessions: [], subscriptions: 0,
+    blockReads: 0, blockPrepares: [], blockCreates: [], blockDeactivations: [], pendingBlocks: [], pendingBlockCreates: [],
+    blockReadError: null, blockPrepareError: null, blockCreateError: null, blockDeactivateError: null,
+    deferBlocks: false, deferBlockCreate: false,
     async getSession() {
       if (repo.authError) throw repo.authError;
       if (options.deferSession) return new Promise(resolve => repo.pendingSessions.push(resolve));
@@ -88,7 +118,7 @@ function fakeRepository(options = {}) {
     },
     getAvailability(input) {
       assert(allowed && repo.session, 'Horas consultadas antes del permiso');
-      const result = NovaCore.getAvailability({ ...input, bookings: repo.rows.filter(item => item.status === 'confirmed') });
+      const result = NovaCore.getAvailability({ ...input, bookings: repo.rows.filter(item => item.status === 'confirmed'), blocks: blockIntervals(repo.blocks, input.date) });
       if (repo.deferTimes) return new Promise((resolve, reject) => repo.pendingTimes.push({ resolve, reject, input, result }));
       if (repo.readError) return Promise.reject(repo.readError);
       return Promise.resolve(result);
@@ -108,6 +138,39 @@ function fakeRepository(options = {}) {
       repo.cancellations.push(id);
       if (repo.cancelError) throw repo.cancelError;
       repo.rows.find(item => item.id === id).status = 'cancelled';
+    },
+    listBlocks() {
+      assert(allowed && repo.session, 'Bloqueos privados consultados antes del permiso');
+      repo.blockReads += 1;
+      if (repo.deferBlocks) return new Promise((resolve, reject) => repo.pendingBlocks.push({ resolve, reject }));
+      if (repo.blockReadError) return Promise.reject(repo.blockReadError);
+      return Promise.resolve(repo.blocks.filter(item => item.active).map(item => ({ ...item })));
+    },
+    async prepareBlock(input) {
+      assert(allowed && repo.session, 'Impacto consultado antes del permiso');
+      repo.blockPrepares.push({ ...input });
+      if (repo.blockPrepareError) throw repo.blockPrepareError;
+      const block = normalizedBlock(input);
+      const affectedBookings = repo.rows.filter(item => item.status === 'confirmed' &&
+        (block.professionalId === null || item.professionalId === block.professionalId) &&
+        item.startAt < block.endAt && item.endAt > block.startAt);
+      return { block, affectedBookings };
+    },
+    async createBlock(input, confirmation = {}) {
+      assert(allowed && repo.session, 'Bloqueo creado antes del permiso');
+      repo.blockCreates.push({ input: { ...input }, confirmation });
+      if (repo.deferBlockCreate) return new Promise((resolve, reject) => repo.pendingBlockCreates.push({ resolve, reject }));
+      if (repo.blockCreateError) throw repo.blockCreateError;
+      const block = { ...normalizedBlock(input), id: 'creado-' + repo.blockCreates.length };
+      repo.blocks.push(block);
+      if (options.failAfterBlockCreate) repo.blockReadError = failure('CONNECTION_ERROR');
+      return block;
+    },
+    async deactivateBlock(id) {
+      assert(allowed && repo.session, 'Bloqueo eliminado antes del permiso');
+      repo.blockDeactivations.push(id);
+      if (repo.blockDeactivateError) throw repo.blockDeactivateError;
+      repo.blocks.find(item => String(item.id) === String(id)).active = false;
     }
   };
   return repo;
@@ -139,11 +202,24 @@ function fillCustomer() {
   $('#phone-phone').value = '+34 612 345 678';
   $('#phone-email').value = 'marina@prueba.example';
 }
+function chooseBlock(overrides = {}) {
+  click('[data-admin-tab="availability"]');
+  const input = {
+    professional: 'laura', kind: 'absence', 'start-date': futureDate(), 'start-time': '12:00',
+    'end-date': futureDate(), 'end-time': '15:00', reason: 'Motivo privado de prueba', ...overrides
+  };
+  Object.keys(input).forEach(field => change('#block-' + field, input[field]));
+}
+function setAllDay(value) {
+  $('#block-all-day').checked = value;
+  $('#block-all-day').dispatchEvent(new Event('change', { bubbles: true }));
+  drainMicrotasks();
+}
 
 test('Sin sesión solo aparece el acceso, sin consultar permisos ni datos privados', () => {
   boot();
   assert(!$('#login-form').hidden && $('#dashboard').hidden, 'Pantalla de acceso incorrecta');
-  assert(repository.rpcs === 0 && repository.reads === 0, 'Se consultan datos antes de autenticarse');
+  assert(repository.rpcs === 0 && repository.reads === 0 && repository.blockReads === 0, 'Se consultan datos antes de autenticarse');
 });
 test('Email y contraseña vacíos tienen errores accesibles y no inician sesión', () => {
   boot(); submit('#login-form');
@@ -159,7 +235,7 @@ test('Una contraseña incorrecta se maneja y se borra del formulario', () => {
 });
 test('Una cuenta no administradora se desconecta con el mensaje exacto', () => {
   boot({ permitted: false }); login();
-  assert(repository.signouts === 1 && repository.reads === 0, 'Cuenta sin permisos ha leído reservas');
+  assert(repository.signouts === 1 && repository.reads === 0 && repository.blockReads === 0, 'Cuenta sin permisos ha leído datos privados');
   assert($('#login-feedback').textContent === 'Esta cuenta no está autorizada para administrar NOVA.', 'Mensaje de denegación incorrecto');
   assert($('#dashboard').hidden, 'Panel abierto sin autorización');
 });
@@ -357,5 +433,213 @@ test('El refresco automático mantiene el foco de teclado en la misma acción', 
   const previous = $('[data-cancel-id="prueba-1"]'); previous.focus();
   NovaTestEnvironment.tickIntervals(30000); drainMicrotasks();
   assert(document.activeElement === $('[data-cancel-id="prueba-1"]') && document.activeElement !== previous, 'Se pierde el foco al refrescar');
+});
+
+test('Disponibilidad abre una vista propia sin ocultar la navegación anterior', () => {
+  boot({ session: adminSession }); click('[data-admin-tab="availability"]');
+  assert(!$('#availability-view').hidden && $('#agenda-view').hidden && $('#phone-view').hidden, 'Las vistas se mezclan');
+  assert($('[data-admin-tab="availability"]').getAttribute('aria-pressed') === 'true', 'No anuncia la sección seleccionada');
+  assert(repository.blockReads > 0 && !$('#blocks-empty').hidden, 'No carga la lista vacía');
+  click('[data-admin-tab="agenda"]');
+  assert($('#availability-view').hidden && !$('#agenda-view').hidden, 'No vuelve a la agenda');
+});
+test('La lista activa distingue profesional, salón completo, tipo y motivo privado', () => {
+  boot({ session: adminSession, blocks: [blockRow(), blockRow('cierre', { professionalId: null, kind: 'closed', reason: '' }), blockRow('inactivo', { active: false })] });
+  click('[data-admin-tab="availability"]');
+  assert(all('[data-block-id]').length === 2 && $('#blocks-empty').hidden, 'Incluye bloques inactivos o pierde activos');
+  assert($('#blocks-list').textContent.includes('Laura') && $('#blocks-list').textContent.includes('Todo el salón'), 'No indica a quién afecta');
+  assert($('#blocks-list').textContent.includes('Ausencia') && $('#blocks-list').textContent.includes('Cierre'), 'Tipos sin traducir');
+  assert($('#blocks-list').textContent.includes('Motivo privado de prueba'), 'Motivo no disponible para el administrador');
+});
+test('Crear una ausencia parcial valida impacto, conserva el intervalo y actualiza la lista', () => {
+  boot({ session: adminSession }); chooseBlock(); submit('#block-form');
+  assert(repository.blockPrepares.length === 1 && repository.blockCreates.length === 1, 'No comprueba y guarda una sola vez');
+  const input = repository.blockCreates[0].input;
+  assert(input.professionalId === 'laura' && input.kind === 'absence' && input.startTime === '12:00' && input.endTime === '15:00', 'Entrada de ausencia incorrecta');
+  assert(input.startDate === futureDate() && input.endDate === futureDate() && !input.allDay, 'Pierde fecha o inventa día completo');
+  assert(repository.blocks[0].startAt === NovaTime.toInstant(futureDate(), 720).toISOString(), 'No interpreta Madrid');
+  assert($('#blocks-list').textContent.includes('Motivo privado de prueba'), 'La lista no se actualiza');
+  assert($('#block-reason').value === '', 'No limpia el motivo tras guardar');
+  assert($('#block-form-feedback').textContent.includes('Disponibilidad actualizada'), 'No muestra éxito');
+  assert(repository.cancellations.length === 0, 'La ausencia cancela citas');
+});
+test('Día completo simplifica horas y vacaciones admite fecha final inclusiva', () => {
+  boot({ session: adminSession }); chooseBlock({ kind: 'vacation', 'end-date': NovaTime.addDays(futureDate(), 4) });
+  setAllDay(true);
+  assert($('#block-start-time').disabled && $('#block-end-time').disabled, 'Las horas siguen siendo obligatorias al bloquear el día');
+  submit('#block-form');
+  const input = repository.blockCreates[0].input;
+  assert(input.allDay && input.kind === 'vacation', 'Pierde opción de días completos');
+  assert(input.endDate === NovaTime.addDays(futureDate(), 4), 'No permite varios días');
+  assert(repository.blocks[0].startAt === NovaTime.toInstant(futureDate(), 0).toISOString(), 'Inicio de día incorrecto');
+  assert(repository.blocks[0].endAt === NovaTime.toInstant(NovaTime.addDays(futureDate(), 5), 0).toISOString(), 'No incluye completo el último día');
+});
+test('Todo el salón envía un profesional nulo y conserva el tipo cierre', () => {
+  boot({ session: adminSession }); chooseBlock({ professional: 'all', kind: 'closed', reason: '' });
+  setAllDay(true); submit('#block-form');
+  assert(repository.blockCreates[0].input.professionalId === null, 'No usa null para todo el salón');
+  assert(repository.blocks[0].kind === 'closed' && repository.blocks[0].reason === '', 'Pierde cierre o exige motivo');
+});
+test('Un intervalo rechazado por el repositorio tiene error accesible y no se guarda', () => {
+  boot({ session: adminSession }); chooseBlock({ 'start-time': '15:00', 'end-time': '12:00' });
+  repository.blockPrepareError = Object.assign(failure('BLOCK_VALIDATION_ERROR'), { fields: { endDate: 'El final debe ser posterior al inicio.' } });
+  submit('#block-form');
+  assert(repository.blockCreates.length === 0, 'Guarda un intervalo rechazado');
+  assert(all('#block-form [aria-invalid="true"]').length > 0, 'No identifica el campo incorrecto');
+  assert(document.activeElement.closest('#block-form'), 'No enfoca el error de formulario');
+});
+test('Las fechas vacías y un motivo demasiado largo se rechazan sin guardar', () => {
+  boot({ session: adminSession }); chooseBlock({ 'start-date': '', reason: 'x'.repeat(501) });
+  repository.blockPrepareError = Object.assign(failure('BLOCK_VALIDATION_ERROR'), { fields: { startDate: 'Introduce una fecha válida.', reason: 'El motivo debe tener como máximo 500 caracteres.' } });
+  submit('#block-form');
+  assert(repository.blockCreates.length === 0, 'Guarda un formulario rechazado');
+  assert($('#block-start-date').getAttribute('aria-invalid') === 'true', 'Fecha vacía sin error');
+  assert($('#block-reason').getAttribute('aria-invalid') === 'true', 'No valida límite del motivo');
+});
+test('Las citas afectadas se explican y Volver no crea ni cancela nada', () => {
+  boot({ session: adminSession, rows: [row('afectada', { professionalId: 'laura', serviceId: 'corte-mujer', start: 750, end: 795, duration: 45 })] });
+  chooseBlock(); submit('#block-form');
+  assert($('#block-impact-dialog').open && repository.blockCreates.length === 0, 'Guarda antes de advertir');
+  assert($('#block-impact-message').textContent.includes('1') && $('#block-impact-message').textContent.includes('cita'), 'No explica cantidad');
+  const text = $('#block-impact-list').textContent;
+  assert(text.includes('Laura') && text.includes('Corte mujer') && text.includes('Álex Prueba') && text.includes('12:30'), 'Aviso sin detalles de la cita');
+  click('#block-impact-back');
+  assert(!$('#block-impact-dialog').open && repository.blockCreates.length === 0 && repository.cancellations.length === 0, 'Volver cambia datos');
+  assert($('#block-reason').value === 'Motivo privado de prueba', 'Volver pierde formulario');
+});
+test('Crear igualmente reconoce las citas mostradas y mantiene sus reservas', () => {
+  boot({ session: adminSession, rows: [row('afectada', { professionalId: 'laura', start: 750, end: 780 })] });
+  chooseBlock(); submit('#block-form'); click('#block-impact-confirm');
+  const sent = repository.blockCreates[0];
+  assert(sent.confirmation.acknowledgedBookingIds.length === 1 && sent.confirmation.acknowledgedBookingIds[0] === 'afectada', 'No identifica el impacto confirmado');
+  assert(repository.rows[0].status === 'confirmed' && repository.cancellations.length === 0, 'Cancela automáticamente una cita');
+  assert(repository.blocks.length === 1 && !$('#block-impact-dialog').open, 'No termina la creación');
+});
+test('Una cita nueva durante la creación obliga a revisar de nuevo el impacto', () => {
+  boot({ session: adminSession }); chooseBlock();
+  const affected = row('reciente', { professionalId: 'laura', start: 750, end: 780 });
+  repository.blockCreateError = Object.assign(failure('AFFECTED_BOOKINGS'), { affectedBookings: [affected], block: blockRow() });
+  submit('#block-form');
+  assert($('#block-impact-dialog').open && $('#block-impact-list').textContent.includes('Álex Prueba'), 'No muestra la nueva cita afectada');
+  assert(repository.blocks.length === 0 && repository.cancellations.length === 0, 'Guarda o cancela sin nuevo consentimiento');
+  repository.blockCreateError = null;
+  click('#block-impact-confirm');
+  assert(repository.blockCreates[1].confirmation.acknowledgedBookingIds[0] === 'reciente', 'No actualiza citas reconocidas');
+  assert(repository.blocks.length === 1, 'No guarda tras revisar el impacto nuevo');
+});
+test('Eliminar bloqueo pide confirmación y Volver conserva el bloqueo activo', () => {
+  boot({ session: adminSession, blocks: [blockRow()] }); click('[data-admin-tab="availability"]');
+  click('[data-remove-block="bloque-prueba"]');
+  assert($('#block-remove-dialog').open && repository.blockDeactivations.length === 0, 'Elimina sin confirmar');
+  assert($('#block-remove-description').textContent.includes('Laura'), 'Confirmación no identifica el bloqueo');
+  click('#block-remove-back');
+  assert(repository.blocks[0].active && repository.blockDeactivations.length === 0, 'Volver elimina');
+});
+test('Confirmar eliminación desactiva sin borrar ni cancelar citas', () => {
+  boot({ session: adminSession, blocks: [blockRow()] }); click('[data-admin-tab="availability"]');
+  click('[data-remove-block="bloque-prueba"]'); click('#block-remove-confirm');
+  assert(repository.blocks.length === 1 && !repository.blocks[0].active, 'No conserva el historial inactivo');
+  assert(repository.blockDeactivations[0] === 'bloque-prueba' && repository.cancellations.length === 0, 'Acción incorrecta');
+  assert(!$('#block-remove-dialog').open && !$('#blocks-empty').hidden, 'No actualiza lista tras eliminar');
+  assert($('#blocks-feedback').textContent.includes('Bloqueo eliminado') || $('#admin-notice').textContent.includes('Bloqueo eliminado'), 'No comunica eliminación');
+});
+test('El fallo de eliminación mantiene el diálogo recuperable y el bloqueo activo', () => {
+  boot({ session: adminSession, blocks: [blockRow()] }); click('[data-admin-tab="availability"]');
+  repository.blockDeactivateError = failure('CONNECTION_ERROR');
+  click('[data-remove-block="bloque-prueba"]'); click('#block-remove-confirm');
+  assert($('#block-remove-dialog').open && repository.blocks[0].active, 'Inventa eliminación');
+  assert($('#block-remove-feedback').textContent.includes('No se pudo') && !$('#block-remove-back').disabled, 'Error sin recuperación');
+  assert(!$('#block-remove-feedback').textContent.includes('Detalle privado'), 'Muestra detalles del servidor');
+});
+test('Los estados de carga y error de disponibilidad permiten reintentar sin filtrar detalles', () => {
+  boot({ session: adminSession }); repository.deferBlocks = true; click('[data-admin-tab="availability"]');
+  assert($('#blocks-feedback').textContent.includes('Cargando disponibilidad') && $('#refresh-blocks').disabled, 'Carga sin estado o permite duplicarla');
+  repository.pendingBlocks.shift().reject(failure('CONNECTION_ERROR')); drainMicrotasks();
+  assert($('#blocks-feedback').textContent === 'No se pudo actualizar la disponibilidad.', 'Error no saneado');
+  assert(!$('#refresh-blocks').disabled, 'No permite reintentar');
+  repository.deferBlocks = false; click('#refresh-blocks');
+  assert(!$('#blocks-empty').hidden && !$('#blocks-feedback').textContent.includes('No se pudo'), 'No recupera lista');
+});
+test('Fallar al comprobar impacto conserva el formulario y no crea el bloqueo', () => {
+  boot({ session: adminSession }); chooseBlock(); repository.blockPrepareError = failure('CONNECTION_ERROR'); submit('#block-form');
+  assert(repository.blockCreates.length === 0 && $('#block-reason').value === 'Motivo privado de prueba', 'Guarda sin impacto o pierde formulario');
+  assert($('#block-form-feedback').textContent === 'No se pudo actualizar la disponibilidad.' && !$('#block-submit').disabled, 'No permite corregir o reintentar');
+});
+test('Los motivos del administrador se escapan antes de renderizar HTML', () => {
+  boot({ session: adminSession, blocks: [blockRow('texto-html', { reason: '<img src=x onerror=alert(1)><script>privado()</script>' })] });
+  click('[data-admin-tab="availability"]');
+  assert(all('#blocks-list img, #blocks-list script').length === 0, 'Inyección en motivo');
+  assert($('#blocks-list').innerHTML.includes('&lt;img'), 'No representa el motivo como texto');
+});
+test('Cerrar sesión borra motivos, listas y diálogos privados de impacto', () => {
+  boot({ session: adminSession, blocks: [blockRow()], rows: [row('afectada', { professionalId: 'laura', start: 750, end: 780 })] });
+  chooseBlock(); submit('#block-form');
+  repository.emit('SIGNED_OUT', null);
+  assert($('#dashboard').hidden && $('#blocks-list').textContent === '' && $('#block-reason').value === '', 'Mantiene motivos tras salir');
+  assert(!$('#block-impact-dialog').open && !$('#block-remove-dialog').open, 'Deja diálogo privado abierto');
+  assert($('#block-impact-list').textContent === '' && $('#block-remove-description').textContent === '', 'Conserva datos en diálogos ocultos');
+});
+test('Una lectura de bloques pendiente no restaura datos tras cerrar sesión', () => {
+  boot({ session: adminSession }); repository.deferBlocks = true; click('[data-admin-tab="availability"]');
+  const pending = repository.pendingBlocks.shift(); repository.emit('SIGNED_OUT', null);
+  pending.resolve([blockRow()]); drainMicrotasks();
+  assert($('#dashboard').hidden && $('#blocks-list').textContent === '', 'La respuesta antigua vuelve a mostrar motivos');
+});
+test('Una escritura pendiente tampoco reabre el panel después de salir', () => {
+  boot({ session: adminSession }); chooseBlock(); repository.deferBlockCreate = true; submit('#block-form');
+  const pending = repository.pendingBlockCreates.shift(); assert(pending, 'No alcanza la escritura pendiente');
+  repository.emit('SIGNED_OUT', null); pending.resolve(blockRow()); drainMicrotasks();
+  assert($('#dashboard').hidden && $('#block-form-feedback').textContent === '' && $('#blocks-list').textContent === '', 'La respuesta tardía publica datos o éxito privado');
+});
+test('Perder autorización en bloques retira también la agenda y los datos del formulario', () => {
+  boot({ session: adminSession, rows: [row()] }); chooseBlock(); repository.blockReadError = failure('FORBIDDEN'); click('#refresh-blocks');
+  assert($('#dashboard').hidden && $('#agenda-list').textContent === '' && $('#block-reason').value === '', 'Deja datos tras revocación');
+  assert($('#login-feedback').textContent === 'Esta cuenta no está autorizada para administrar NOVA.', 'Revocación sin explicación');
+});
+test('La cita telefónica descarta un servicio largo que invade parcialmente un bloque', () => {
+  let date = futureDate();
+  while ([0, 6].includes(NovaCore.parseDateKey(date).getDay())) date = NovaTime.addDays(date, 1);
+  boot({ session: adminSession, blocks: [blockRow('parcial', {
+    startAt: NovaTime.toInstant(date, 720).toISOString(), endAt: NovaTime.toInstant(date, 900).toISOString()
+  })] }); choosePhone('color-completo', date);
+  const offered = all('#phone-time option').map(item => item.value);
+  assert(offered.includes('600') && !offered.includes('630') && !offered.includes('720') && offered.includes('900'), 'No exige 120 minutos libres antes o después del bloqueo');
+});
+test('La ausencia de Laura no impide elegir a María para una cita telefónica', () => {
+  const date = futureDate();
+  boot({ session: adminSession, blocks: [blockRow('dia-laura', { startAt: NovaTime.dayRange(date).startAt, endAt: NovaTime.dayRange(date).endAt })] });
+  choosePhone('tinte-raiz');
+  assert($('#phone-submit').disabled && $('#phone-availability').textContent.includes('Día completo'), 'Laura ofrece horas durante su ausencia');
+  change('#phone-professional', 'maria');
+  assert(all('#phone-time option').length > 1, 'La ausencia de Laura bloquea también a María');
+});
+test('El cierre de todo el salón impide horas telefónicas y eliminarlo las devuelve', () => {
+  const date = futureDate();
+  boot({ session: adminSession, blocks: [blockRow('salon', { professionalId: null, startAt: NovaTime.dayRange(date).startAt, endAt: NovaTime.dayRange(date).endAt })] });
+  choosePhone();
+  assert($('#phone-submit').disabled && all('#phone-time option').length === 1, 'Carlos ofrece citas durante el cierre');
+  click('[data-admin-tab="availability"]'); click('[data-remove-block="salon"]'); click('#block-remove-confirm');
+  choosePhone();
+  assert(all('#phone-time option').length > 1, 'No libera las horas telefónicas');
+});
+test('Una creación de bloqueo incierta impide repetir la escritura', () => {
+  boot({ session: adminSession }); chooseBlock();
+  repository.blockCreateError = failure('BLOCK_UNCERTAIN'); submit('#block-form');
+  assert($('#block-submit').disabled && $('#block-form-feedback').textContent.includes('evitar duplicados'), 'No bloquea duplicados');
+  submit('#block-form');
+  assert(repository.blockCreates.length === 1 && $('#block-reason').value === 'Motivo privado de prueba', 'Reenvía o pierde los datos pendientes');
+});
+test('Un bloqueo guardado conserva el éxito si falla el refresco posterior', () => {
+  boot({ session: adminSession, failAfterBlockCreate: true }); chooseBlock(); submit('#block-form');
+  assert($('#block-form-feedback').textContent === 'Disponibilidad actualizada.', 'Convierte una escritura confirmada en fallo');
+  assert($('#blocks-feedback').textContent === 'No se pudo actualizar la disponibilidad.', 'Oculta fallo de lectura');
+  assert($('#block-reason').value === '' && !$('#refresh-blocks').disabled, 'No limpia o no permite refrescar');
+});
+test('Guardar un bloqueo deja operativas las acciones anteriores de agenda', () => {
+  boot({ session: adminSession, rows: [row()] }); chooseBlock(); submit('#block-form');
+  click('[data-admin-tab="agenda"]');
+  assert(!$('#refresh-agenda').disabled && !$('[data-cancel-id="prueba-1"]').disabled, 'La agenda se queda bloqueada tras guardar');
+  click('#refresh-agenda'); click('[data-cancel-id="prueba-1"]');
+  assert($('#cancel-dialog').open, 'Cancelar cita deja de funcionar tras guardar bloqueo');
 });
 print('\n' + passed + '/' + passed + ' pruebas de interfaz administrativa superadas.');

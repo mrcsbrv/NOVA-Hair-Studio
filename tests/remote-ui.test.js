@@ -61,7 +61,7 @@ function busyDay(date, professionalId = "carlos") {
 function fakeRepository(options = {}) {
   const listeners = new Set();
   const repo = {
-    mode: "supabase", rows: options.rows || [], calls: [], inserts: [], pending: [],
+    mode: "supabase", rows: options.rows || [], blocks: options.blocks || [], calls: [], inserts: [], pending: [],
     deferLists: Boolean(options.deferLists), readError: null, createError: null,
     cancelCalls: 0, resetCalls: 0,
     listBookings(range) {
@@ -69,6 +69,11 @@ function fakeRepository(options = {}) {
       if (repo.deferLists) return new Promise((resolve, reject) => repo.pending.push({ range: { ...range }, resolve, reject }));
       if (repo.readError) return Promise.reject(repo.readError);
       return Promise.resolve(repo.rows.filter(row => row.date >= range.startDate && row.date < range.endDate).map(row => ({ ...row })));
+    },
+    async listAvailability(range) {
+      const bookings = await repo.listBookings(range);
+      if (repo.blockError) throw repo.blockError;
+      return { bookings, blocks: repo.blocks.filter(row => row.date >= range.startDate && row.date < range.endDate).map(row => ({ ...row })) };
     },
     async createBooking(input) {
       repo.inserts.push({ ...input, customer: { ...input.customer } });
@@ -291,7 +296,7 @@ test("Un conflicto del servidor vuelve al selector y actualiza el intervalo ocup
   click("#confirm-booking");
   assert($remote("#booking-review").hidden && $remote("#booking-success").hidden, "El conflicto deja una confirmación inválida");
   assert(!$remote(slotSelector(chosen)), "Tras el conflicto se sigue ofreciendo el hueco ocupado");
-  assert($remote("#booking-status").textContent.includes("ya no está disponible"), "Falta el aviso de conflicto");
+  assert($remote("#booking-status").textContent === "Este horario acaba de dejar de estar disponible.", "Falta el aviso de conflicto");
 });
 
 test("Una revisión queda bloqueada durante el refresco y se invalida si el hueco cambia", () => {
@@ -372,6 +377,54 @@ test("El refresco remoto recupera el foco del día sin quitárselo a otro contro
   $remote("#service-select").focus();
   resolveAll();
   assert(document.activeElement === $remote("#service-select"), "La respuesta tardía roba el foco a otro control");
+});
+
+test("Un bloqueo de Laura conserva María y marca día completo al filtrar Laura", () => {
+  const date = futureDate();
+  boot({ blocks: [{ professionalId: "laura", date, start: 0, end: 1440, reason: "Motivo privado de salud" }] });
+  change("#service-select", "corte-mujer");
+  chooseDate(date);
+  assert(remoteAll("[data-slot]").length > 0, "María pierde sus horas libres");
+  assert(remoteAll("[data-slot]").every(slot => slot.dataset.professional === "maria"), "Se ofrece Laura durante su ausencia");
+  change('#professional-options input[value="laura"]', "laura");
+  assert($remote('[data-date="' + date + '"]').classList.contains("is-full"), "No se refleja el día bloqueado de Laura");
+  assert(remoteAll("[data-slot]").length === 0, "Se ofrecen horas bloqueadas");
+  assert(!document.body.textContent.includes("Motivo privado"), "La web muestra información administrativa");
+});
+
+test("Un cierre del salón desactiva horas y liberar el bloqueo las recupera", () => {
+  const date = futureDate();
+  boot({ blocks: [{ professionalId: null, date, start: 0, end: 1440 }] });
+  change("#service-select", "corte-caballero");
+  chooseDate(date);
+  assert(remoteAll("[data-slot]").length === 0, "Se ofrece Carlos durante un cierre general");
+  repository.blocks = [];
+  repository.notify();
+  assert(remoteAll("[data-slot]").length > 0, "Liberar el bloqueo no recupera horas");
+});
+
+test("Un bloqueo aparecido al confirmar actualiza el calendario y conserva datos del formulario", () => {
+  boot();
+  const chosen = prepareReview();
+  repository.blocks.push({ professionalId: null, date: chosen.date, start: chosen.start, end: chosen.start + 30 });
+  repository.createError = failure("SLOT_UNAVAILABLE", "Este horario acaba de dejar de estar disponible.");
+  click("#confirm-booking");
+  assert($remote("#booking-review").hidden && $remote("#booking-success").hidden, "El bloqueo mantiene un resumen confirmable");
+  assert(!$remote(slotSelector(chosen)), "Se sigue ofreciendo el intervalo bloqueado");
+  assert($remote("#booking-status").textContent === "Este horario acaba de dejar de estar disponible.", "Falta el aviso exacto");
+  assert($remote("#customer-name").value === "Álex Remoto", "El conflicto borra los datos del cliente");
+});
+
+test("Un error exclusivo de bloques impide usar reservas como disponibilidad completa", () => {
+  boot();
+  prepareReview();
+  repository.blockError = failure("CONNECTION_ERROR", "No se pudo comprobar toda la disponibilidad.");
+  repository.notify();
+  assert(remoteAll("[data-slot]").length === 0, "Se ofrecen horas ignorando los bloqueos inaccesibles");
+  assert($remote("#booking-review").hidden, "Se conserva un resumen sin disponibilidad conocida");
+  repository.blockError = null;
+  click("#retry-availability");
+  assert(remoteAll("[data-slot]").length > 0, "No se recupera el selector tras consultar bloques");
 });
 
 print("Interfaz remota: " + passed + "/" + passed + " pruebas correctas (repositorio controlado; sin conexión real).");

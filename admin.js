@@ -15,7 +15,14 @@
     authorized: false, userId: null, epoch: 0, authBusy: false, authRun: 0, autoAuthBlocked: false,
     bookings: [], slots: [], agendaRequest: 0, timeRequest: 0,
     agendaLoading: false, timeLoading: false, mutating: false,
-    uncertain: false, cancelId: null, cancelTrigger: null, tab: 'agenda'
+    uncertain: false, cancelId: null, cancelTrigger: null, tab: 'agenda',
+    blocks: [], blocksRequest: 0, blocksLoading: false, blockUncertain: false,
+    blockPending: null, blockAcknowledged: [], blockRemovingId: null, blockTrigger: null, blockFocusError: null
+  };
+  var blockKinds = { absence: 'Ausencia', vacation: 'Vacaciones', closed: 'Cierre', other: 'Otro' };
+  var blockFields = {
+    professionalId: 'block-professional', kind: 'block-kind', startDate: 'block-start-date',
+    startTime: 'block-start-time', endDate: 'block-end-date', endTime: 'block-end-time', reason: 'block-reason'
   };
   var dateFormat = new Intl.DateTimeFormat('es-ES', {
     timeZone: time.TIME_ZONE, weekday: 'short', day: 'numeric', month: 'long', year: 'numeric'
@@ -56,10 +63,19 @@
     state.agendaLoading = state.timeLoading = state.mutating = false;
     state.uncertain = false;
     state.cancelId = state.cancelTrigger = null;
+    state.blocks = [];
+    state.blocksRequest += 1;
+    state.blocksLoading = state.blockUncertain = false;
+    state.blockRemovingId = state.blockTrigger = null;
     if (repository) repository.invalidateAuth();
     $('#dashboard').hidden = true;
     $('#auth-screen').hidden = false;
     $('#agenda-list').innerHTML = '';
+    $('#blocks-list').innerHTML = '';
+    $('#block-impact-list').innerHTML = '';
+    resetBlockForm();
+    ['blocks-feedback', 'block-form-feedback', 'block-impact-message', 'block-impact-feedback', 'block-remove-description', 'block-remove-feedback'].forEach(function (id) { message('#' + id, ''); });
+    ['#block-impact-dialog', '#block-remove-dialog'].forEach(function (selector) { if ($(selector).open) $(selector).close(); });
     $('#phone-form').reset();
     $('#login-password').value = '';
     clearFieldErrors('phone-', ['name', 'phone', 'email']);
@@ -321,10 +337,12 @@
   function setTab(tab) {
     state.tab = tab;
     all('[data-admin-tab]').forEach(function (button) { button.setAttribute('aria-pressed', String(button.dataset.adminTab === tab)); });
-    $('#agenda-view').hidden = tab === 'phone';
+    $('#agenda-view').hidden = tab === 'phone' || tab === 'availability';
     $('#phone-view').hidden = tab !== 'phone';
-    if (tab !== 'phone') { $('#agenda-filter').value = tab === 'history' ? 'cancelled' : 'upcoming'; renderAgenda(); }
-    else refreshTimes();
+    $('#availability-view').hidden = tab !== 'availability';
+    if (tab === 'phone') refreshTimes();
+    else if (tab === 'availability') refreshBlocks();
+    else { $('#agenda-filter').value = tab === 'history' ? 'cancelled' : 'upcoming'; renderAgenda(); }
   }
 
   function updatePhoneControls() {
@@ -335,6 +353,9 @@
     $('#refresh-phone-hours').disabled = !state.authorized || state.mutating || state.timeLoading;
     $('#phone-submit').disabled = !state.authorized || state.mutating || state.timeLoading || state.uncertain || !state.slots.length || $('#phone-time').value === '';
     $('#phone-submit').textContent = state.mutating ? 'Guardando…' : 'Crear cita telefónica';
+    $('#refresh-agenda').disabled = state.mutating || state.agendaLoading;
+    all('[data-cancel-id]').forEach(function (button) { button.disabled = state.mutating; });
+    updateBlockControls();
   }
 
   function resetPhoneSelection() {
@@ -440,7 +461,7 @@
     if (!booking) return;
     state.cancelId = booking.id;
     state.cancelTrigger = button;
-    message('#cancel-description', 'Vas a cancelar la cita de ' + booking.customer.name + ': ' + serviceName(booking.serviceId) + ', ' + formatDate(booking.date) + ' a las ' + core.timeLabel(booking.start) + '. El horario volverá a estar disponible.');
+    message('#cancel-description', 'Vas a cancelar la cita de ' + booking.customer.name + ': ' + serviceName(booking.serviceId) + ', ' + formatDate(booking.date) + ' a las ' + core.timeLabel(booking.start) + '. El horario quedará libre si no hay otra reserva o bloqueo.');
     message('#cancel-feedback', '');
     $('#cancel-dialog').showModal();
     $('#cancel-dismiss').focus();
@@ -480,6 +501,271 @@
     }
   }
 
+  /* Bloqueos administrativos: periodo independiente de las reservas. Nunca se
+   * cancelan citas al bloquear; los motivos permanecen en esta página privada.
+   */
+  function clearBlockErrors() {
+    state.blockFocusError = null;
+    Object.keys(blockFields).forEach(function (field) {
+      $('#' + blockFields[field]).removeAttribute('aria-invalid');
+      message('#' + blockFields[field] + '-error', '');
+    });
+  }
+
+  function updateBlockControls() {
+    var locked = state.mutating || Boolean(state.blockPending);
+    all('#block-form input, #block-form select, #block-form textarea').forEach(function (input) { input.disabled = locked; });
+    var allDay = $('#block-all-day').checked;
+    ['start', 'end'].forEach(function (edge) {
+      $('#block-' + edge + '-time-field').hidden = allDay;
+      $('#block-' + edge + '-time').disabled = locked || allDay;
+    });
+    message('#block-range-note', allDay ? 'Se incluyen todos los días, desde la fecha de inicio hasta la de fin, en horario de Madrid.' : 'Fechas y horas de Madrid. Puedes seleccionar un periodo de varios días.');
+    $('#block-submit').disabled = !state.authorized || locked || state.blockUncertain;
+    $('#block-submit').textContent = state.mutating ? 'Comprobando y guardando…' : 'Bloquear disponibilidad';
+    $('#refresh-blocks').disabled = !state.authorized || state.blocksLoading || state.mutating;
+    $('#block-impact-confirm').disabled = state.mutating || state.blockUncertain || !state.blockPending;
+    $('#block-impact-back').disabled = state.mutating;
+    $('#block-remove-confirm').disabled = state.mutating;
+    $('#block-remove-back').disabled = state.mutating;
+    all('[data-remove-block]').forEach(function (button) { button.disabled = state.mutating; });
+  }
+
+  function resetBlockForm() {
+    state.blockPending = null;
+    state.blockAcknowledged = [];
+    $('#block-form').reset();
+    $('#block-all-day').checked = false;
+    $('#block-start-date').value = time.dateKey();
+    $('#block-end-date').value = time.dateKey();
+    $('#block-start-time').value = '09:00';
+    $('#block-end-time').value = '20:00';
+    // Evita que el navegador recupere el motivo escrito al volver a una página.
+    $('#block-reason').value = '';
+    clearBlockErrors();
+    updateBlockControls();
+  }
+
+  function readBlockForm() {
+    return {
+      professionalId: $('#block-professional').value === 'all' ? null : $('#block-professional').value,
+      kind: $('#block-kind').value, startDate: $('#block-start-date').value, startTime: $('#block-start-time').value,
+      endDate: $('#block-end-date').value, endTime: $('#block-end-time').value,
+      allDay: $('#block-all-day').checked, reason: $('#block-reason').value.trim()
+    };
+  }
+
+  function blockError(error, selector) {
+    if (error && ['AUTH_REQUIRED', 'STALE_AUTH', 'NOT_ADMIN', 'FORBIDDEN'].indexOf(error.code) !== -1) {
+      handlePrivateError(error, selector);
+      return;
+    }
+    if (error && error.code === 'BLOCK_VALIDATION_ERROR') {
+      var fields = error.fields || {};
+      Object.keys(fields).forEach(function (field) {
+        if (!blockFields[field]) return;
+        $('#' + blockFields[field]).setAttribute('aria-invalid', 'true');
+        message('#' + blockFields[field] + '-error', fields[field]);
+      });
+      message(selector, 'Revisa los datos del bloqueo. El fin debe ser posterior al inicio.');
+      var first = Object.keys(fields).find(function (field) { return blockFields[field]; });
+      // El envío mantiene los campos desactivados hasta terminar la comprobación.
+      // El foco se restaura después de volver a habilitarlos.
+      state.blockFocusError = first ? blockFields[first] : null;
+    } else if (error && error.code === 'BLOCK_UNCERTAIN') {
+      message(selector, 'No se pudo verificar si el bloqueo se guardó. Actualiza la lista para comprobarlo antes de recargar y crear otro. La creación queda bloqueada para evitar duplicados.');
+    } else message(selector, 'No se pudo actualizar la disponibilidad.');
+  }
+
+  function blockPeriod(block) {
+    var start = time.parts(block.startAt);
+    var end = time.parts(block.endAt);
+    var startDate = time.dateKey(block.startAt);
+    var endDate = time.dateKey(block.endAt);
+    if (start.hour === 0 && start.minute === 0 && start.second === 0 && end.hour === 0 && end.minute === 0 && end.second === 0) {
+      var lastDay = time.addDays(endDate, -1);
+      return startDate === lastDay ? formatDate(startDate) + ' · Día completo' : formatDate(startDate) + ' — ' + formatDate(lastDay) + ' · Días completos';
+    }
+    return formatDate(startDate) + ' · ' + core.timeLabel(start.hour * 60 + start.minute) + ' — ' +
+      (startDate === endDate ? '' : formatDate(endDate) + ' · ') + core.timeLabel(end.hour * 60 + end.minute);
+  }
+
+  function renderBlocks() {
+    if (!state.authorized) return;
+    var focused = document.activeElement;
+    var focusedId = focused && focused.dataset.removeBlock;
+    $('#blocks-list').innerHTML = state.blocks.filter(function (block) { return block.active; }).slice().sort(function (a, b) {
+      return new Date(a.startAt) - new Date(b.startAt) || String(a.id).localeCompare(String(b.id));
+    }).map(function (block) {
+      return '<article class="booking-card block-card" data-block-id="' + escapeHTML(block.id) + '">' +
+        '<div class="booking-card-head"><h4>' + escapeHTML(block.professionalId === null ? 'Todo el salón' : professionalName(block.professionalId)) + '</h4>' +
+        '<span class="booking-status">' + escapeHTML(blockKinds[block.kind] || 'Otro') + '</span></div>' +
+        '<p class="block-period">' + escapeHTML(blockPeriod(block)) + '</p>' +
+        (block.reason ? '<p class="block-reason">' + escapeHTML(block.reason) + '</p>' : '') +
+        '<div class="booking-actions"><button class="btn btn-secondary btn-small" type="button" data-remove-block="' + escapeHTML(block.id) + '">Eliminar bloqueo<span class="sr-only"> de ' + escapeHTML(block.professionalId === null ? 'todo el salón' : professionalName(block.professionalId)) + '</span></button></div></article>';
+    }).join('');
+    $('#blocks-empty').hidden = state.blocks.some(function (block) { return block.active; });
+    updateBlockControls();
+    if (focusedId) {
+      var replacement = all('[data-remove-block]').find(function (button) { return button.dataset.removeBlock === focusedId; });
+      if (replacement && !replacement.disabled) replacement.focus();
+      else $('#refresh-blocks').focus();
+    }
+  }
+
+  async function refreshBlocks(successMessage) {
+    if (!state.authorized) return;
+    var epoch = state.epoch;
+    var request = ++state.blocksRequest;
+    state.blocksLoading = true;
+    $('#blocks-list').setAttribute('aria-busy', 'true');
+    message('#blocks-feedback', 'Cargando disponibilidad…');
+    updateBlockControls();
+    try {
+      var blocks = await repository.listBlocks();
+      if (!current(epoch) || request !== state.blocksRequest) return;
+      state.blocks = blocks;
+      renderBlocks();
+      message('#blocks-feedback', successMessage || 'Disponibilidad actualizada.');
+    } catch (error) {
+      if (current(epoch) && request === state.blocksRequest) blockError(error, '#blocks-feedback');
+    } finally {
+      if (current(epoch) && request === state.blocksRequest) {
+        state.blocksLoading = false;
+        $('#blocks-list').setAttribute('aria-busy', 'false');
+        updateBlockControls();
+      }
+    }
+  }
+
+  function showBlockImpact(input, affected, changed) {
+    state.blockPending = input;
+    state.blockAcknowledged = affected.map(function (booking) { return String(booking.id); });
+    message('#block-impact-message', 'Este bloqueo afecta a ' + affected.length + ' citas ya reservadas.');
+    $('#block-impact-list').innerHTML = affected.map(function (booking) {
+      return '<li><strong>' + escapeHTML(booking.customer.name) + '</strong><span>' + escapeHTML(formatDate(booking.date)) + ' · ' + escapeHTML(core.timeLabel(booking.start)) + '</span>' +
+        '<span>' + escapeHTML(professionalName(booking.professionalId)) + ' · ' + escapeHTML(serviceName(booking.serviceId)) + '</span></li>';
+    }).join('');
+    message('#block-impact-feedback', changed ? 'La agenda ha cambiado. Revisa las citas afectadas antes de confirmar de nuevo.' : '');
+    if (!$('#block-impact-dialog').open) $('#block-impact-dialog').showModal();
+    updateBlockControls();
+    $('#block-impact-back').focus();
+  }
+
+  async function saveBlock(input, acknowledgedIds, epoch) {
+    try {
+      await repository.createBlock(input, { acknowledgedBookingIds: acknowledgedIds || [] });
+      if (!current(epoch)) return;
+      state.blockPending = null;
+      if ($('#block-impact-dialog').open) $('#block-impact-dialog').close();
+      resetBlockForm();
+      message('#block-form-feedback', 'Disponibilidad actualizada.');
+      await refreshBlocks('Disponibilidad actualizada.');
+      if (current(epoch)) await refreshAgenda();
+      if (current(epoch) && $('#phone-service').value) await refreshTimes();
+    } catch (error) {
+      if (!current(epoch)) return;
+      if (error && error.code === 'AFFECTED_BOOKINGS' && Array.isArray(error.affectedBookings)) {
+        showBlockImpact(input, error.affectedBookings, true);
+      } else {
+        if (error && error.code === 'BLOCK_UNCERTAIN') {
+          state.blockUncertain = true;
+          state.blockPending = null;
+          if ($('#block-impact-dialog').open) $('#block-impact-dialog').close();
+        }
+        blockError(error, $('#block-impact-dialog').open ? '#block-impact-feedback' : '#block-form-feedback');
+      }
+    }
+  }
+
+  async function prepareBlock(event) {
+    event.preventDefault();
+    if (!state.authorized || state.mutating || state.blockUncertain || state.blockPending) return;
+    clearBlockErrors();
+    var input = readBlockForm();
+    var epoch = state.epoch;
+    state.mutating = true;
+    updatePhoneControls();
+    message('#block-form-feedback', 'Comprobando citas afectadas…');
+    try {
+      var prepared = await repository.prepareBlock(input);
+      if (!current(epoch)) return;
+      if (prepared.affectedBookings.length) {
+        message('#block-form-feedback', 'Revisa las citas afectadas antes de crear el bloqueo.');
+        showBlockImpact(input, prepared.affectedBookings, false);
+      } else await saveBlock(input, [], epoch);
+    } catch (error) {
+      if (current(epoch)) blockError(error, '#block-form-feedback');
+    } finally {
+      if (current(epoch)) {
+        state.mutating = false;
+        updatePhoneControls();
+        if (state.blockFocusError) $('#' + state.blockFocusError).focus();
+        else if ($('#block-impact-dialog').open) $('#block-impact-back').focus();
+      }
+    }
+  }
+
+  async function confirmBlockImpact() {
+    if (!state.authorized || state.mutating || !state.blockPending || state.blockUncertain) return;
+    var epoch = state.epoch;
+    state.mutating = true;
+    updatePhoneControls();
+    message('#block-impact-feedback', 'Comprobando y guardando el bloqueo…');
+    try { await saveBlock(state.blockPending, state.blockAcknowledged.slice(), epoch); }
+    finally {
+      if (current(epoch)) {
+        state.mutating = false;
+        updatePhoneControls();
+        if ($('#block-impact-dialog').open) $('#block-impact-back').focus();
+        else $('#block-submit').focus();
+      }
+    }
+  }
+
+  function openRemoveBlock(button) {
+    if (!state.authorized || state.mutating) return;
+    var block = state.blocks.find(function (item) { return item.active && String(item.id) === button.dataset.removeBlock; });
+    if (!block) return;
+    state.blockRemovingId = block.id;
+    state.blockTrigger = button;
+    message('#block-remove-description', (block.professionalId === null ? 'Todo el salón' : professionalName(block.professionalId)) + ' · ' + blockKinds[block.kind] + '. ' + blockPeriod(block));
+    message('#block-remove-feedback', '');
+    $('#block-remove-dialog').showModal();
+    $('#block-remove-back').focus();
+  }
+
+  async function removeBlock() {
+    if (!state.authorized || state.mutating || state.blockRemovingId === null) return;
+    var epoch = state.epoch;
+    state.mutating = true;
+    updatePhoneControls();
+    message('#block-remove-feedback', 'Actualizando disponibilidad…');
+    try {
+      await repository.deactivateBlock(state.blockRemovingId);
+      if (!current(epoch)) return;
+      $('#block-remove-dialog').close();
+      message('#admin-notice', 'Bloqueo eliminado.');
+      await refreshBlocks('Bloqueo eliminado.');
+      if (current(epoch)) await refreshAgenda();
+      if (current(epoch) && $('#phone-service').value) await refreshTimes();
+    } catch (error) {
+      if (current(epoch)) {
+        if (error && error.code === 'BLOCK_UNCERTAIN') message('#block-remove-feedback', 'No se pudo verificar si se eliminó el bloqueo. Vuelve a la lista y actualízala antes de intentarlo de nuevo.');
+        else blockError(error, '#block-remove-feedback');
+      }
+    } finally {
+      if (current(epoch)) {
+        state.mutating = false;
+        updatePhoneControls();
+        if (!$('#block-remove-dialog').open) $('#refresh-blocks').focus();
+      }
+    }
+  }
+
+  $('#block-professional').innerHTML = '<option value="all">Todo el salón</option>' + data.professionals.map(function (person) {
+    return '<option value="' + escapeHTML(person.id) + '">' + escapeHTML(person.name) + '</option>';
+  }).join('');
   $('#phone-service').innerHTML = '<option value="">Elige un servicio</option>' + data.services.map(function (service) {
     return '<option value="' + escapeHTML(service.id) + '">' + escapeHTML(service.name) + ' · ' + service.duration + ' min · ' + service.price + ' €</option>';
   }).join('');
@@ -513,10 +799,41 @@
     if (state.cancelTrigger && state.cancelTrigger.isConnected) state.cancelTrigger.focus();
     state.cancelTrigger = null;
   });
+  $('#block-form').addEventListener('submit', prepareBlock);
+  $('#block-all-day').addEventListener('change', function () { clearBlockErrors(); updateBlockControls(); });
+  $('#refresh-blocks').addEventListener('click', function () { if (!state.mutating) refreshBlocks(); });
+  $('#blocks-list').addEventListener('click', function (event) {
+    var button = event.target.closest('[data-remove-block]');
+    if (button) openRemoveBlock(button);
+  });
+  $('#block-impact-confirm').addEventListener('click', confirmBlockImpact);
+  $('#block-impact-back').addEventListener('click', function () { if (!state.mutating) $('#block-impact-dialog').close(); });
+  $('#block-remove-confirm').addEventListener('click', removeBlock);
+  $('#block-remove-back').addEventListener('click', function () { if (!state.mutating) $('#block-remove-dialog').close(); });
+  ['#block-impact-dialog', '#block-remove-dialog'].forEach(function (selector) {
+    $(selector).addEventListener('cancel', function (event) { if (state.mutating) event.preventDefault(); });
+  });
+  $('#block-impact-dialog').addEventListener('close', function () {
+    state.blockPending = null;
+    state.blockAcknowledged = [];
+    $('#block-impact-list').innerHTML = '';
+    message('#block-impact-message', '');
+    message('#block-impact-feedback', '');
+    updateBlockControls();
+    if (state.authorized && !state.mutating) $('#block-submit').focus();
+  });
+  $('#block-remove-dialog').addEventListener('close', function () {
+    state.blockRemovingId = null;
+    message('#block-remove-description', '');
+    message('#block-remove-feedback', '');
+    if (state.blockTrigger && state.blockTrigger.isConnected) state.blockTrigger.focus();
+    state.blockTrigger = null;
+  });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible' && state.authorized && !state.mutating) {
       refreshAgenda();
       if (state.tab === 'phone') refreshTimes();
+      if (state.tab === 'availability') refreshBlocks();
     }
   });
   global.addEventListener('pagehide', function () {
@@ -530,9 +847,10 @@
   });
   global.addEventListener('pageshow', function (event) { if (event.persisted) checkSession(); });
   global.setInterval(function () {
-    if (document.visibilityState === 'visible' && state.authorized && !state.mutating && !state.agendaLoading && !state.timeLoading) {
+    if (document.visibilityState === 'visible' && state.authorized && !state.mutating && !state.agendaLoading && !state.timeLoading && !state.blocksLoading) {
       refreshAgenda();
       if (state.tab === 'phone') refreshTimes();
+      if (state.tab === 'availability') refreshBlocks();
     }
   }, 30000);
   checkSession();

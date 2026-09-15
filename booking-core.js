@@ -51,8 +51,9 @@
     var date = parseDateKey(options.date);
     var now = options.now instanceof Date ? options.now : new Date();
     var bookings = options.bookings || [];
+    var blocks = options.blocks || [];
     var professionalId = options.professionalId || 'any';
-    if (!service || !date || !Array.isArray(bookings)) {
+    if (!service || !date || !Array.isArray(bookings) || !Array.isArray(blocks)) {
       throw bookingError('VALIDATION_ERROR', 'Selecciona un servicio y una fecha válidos.');
     }
     var professionals = professionalId === 'any' ? service.professionals : [professionalId];
@@ -67,6 +68,9 @@
     var slots = [];
     var unavailable = [];
     var dayBookings = bookings.filter(function (booking) { return booking.date === options.date; });
+    // Los bloqueos conservan su identidad conceptual: null afecta a todo el salón.
+    // El motor solo recibe intervalos, nunca motivos ni datos administrativos.
+    var dayBlocks = blocks.filter(function (block) { return block.date === options.date; });
     for (var start = hours.start; start < hours.end; start += data.business.slotInterval) {
       var end = start + service.duration;
       // Solo hoy necesita comparar instantes; los días futuros son fechas civiles de Madrid.
@@ -82,6 +86,8 @@
       professionals.forEach(function (id) {
         var busy = dayBookings.some(function (booking) {
           return booking.professionalId === id && overlaps(start, end, booking.start, booking.end);
+        }) || dayBlocks.some(function (block) {
+          return (block.professionalId === null || block.professionalId === id) && overlaps(start, end, block.start, block.end);
         });
         if (!busy) {
           slots.push({ start: start, end: end, professionalId: id });
