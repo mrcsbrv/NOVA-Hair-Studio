@@ -66,16 +66,19 @@
       typeof key === 'string' && /^sb_publishable_[a-z\d_-]+$/i.test(key);
   }
 
-  function getClient(config, sdk) {
+  function getClient(config, sdk, mode) {
     if (!validConfiguration(config.url, config.key) || !sdk || typeof sdk.createClient !== 'function') throw configurationError();
-    var identity = config.url + '\n' + config.key;
+    var identity = config.url + '\n' + config.key + '\n' + (mode || 'public');
     if (sharedClient) {
       if (sharedConfiguration !== identity) throw configurationError();
       return sharedClient;
     }
     try {
       sharedClient = sdk.createClient(config.url, config.key, {
-        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+        // Cada página usa un solo cliente. El público nunca recupera la sesión privada.
+        auth: mode === 'admin' ? {
+          persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: 'nova-admin-auth-v1'
+        } : { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
         db: { retry: false }
       });
       if (!sharedClient || typeof sharedClient.from !== 'function') throw configurationError();
@@ -87,7 +90,7 @@
     }
   }
 
-  async function execute(query, mutation) {
+  async function execute(query, mutation, privateAccess) {
     // v2 recientes reintentan también POST: una reserva no se retransmite automáticamente.
     if (typeof query.retry === 'function') query = query.retry(false);
     var timer = null;
@@ -105,6 +108,10 @@
     try {
       var response = await (timeout ? Promise.race([Promise.resolve(query), timeout]) : query);
       if (!response || typeof response !== 'object') throw mutation ? uncertainError() : connectionError();
+      if (privateAccess && (response.status === 401 || response.status === 403 ||
+        (response.error && ['42501', 'PGRST301', 'PGRST302'].indexOf(String(response.error.code)) !== -1))) {
+        throw fail('AUTH_REQUIRED', 'Inicia sesión de nuevo para acceder a la agenda.');
+      }
       if (response.error) throw serverError(response.error, response.status, mutation);
       if (mutation && !Number.isInteger(response.status)) throw uncertainError();
       if (response.status && (response.status < 200 || response.status >= 300)) throw serverError(null, response.status, mutation);
@@ -335,5 +342,23 @@
     return createRemoteRepository({ url: typeof url === 'string' ? url.trim() : url, key: typeof key === 'string' ? key.trim() : key }, options);
   }
 
-  global.NovaStorage = { createRepository: createRepository };
+  function createAdminContext(options) {
+    options = options || {};
+    var url = Object.prototype.hasOwnProperty.call(options, 'url') ? options.url :
+      typeof NOVA_SUPABASE_URL !== 'undefined' ? NOVA_SUPABASE_URL : undefined;
+    var key = Object.prototype.hasOwnProperty.call(options, 'publishableKey') ? options.publishableKey :
+      typeof NOVA_SUPABASE_PUBLISHABLE_KEY !== 'undefined' ? NOVA_SUPABASE_PUBLISHABLE_KEY : undefined;
+    var config = { url: typeof url === 'string' ? url.trim() : url, key: typeof key === 'string' ? key.trim() : key };
+    // Comparte configuración, transporte y conversiones; nunca activa datos demo ni consulta por sí solo.
+    return {
+      client: function () { return getClient(config, options.sdk || global.supabase, 'admin'); },
+      execute: function (query, mutation) { return execute(query, mutation, true); },
+      databaseId: databaseId, normalizedId: normalizedId,
+      validateMappings: validateMappings, intervalRows: intervalRows,
+      professionalFromDatabase: professionalFromDatabase,
+      isSafeError: function (error) { return !!error && safeErrors.has(error); }
+    };
+  }
+
+  global.NovaStorage = { createRepository: createRepository, createAdminContext: createAdminContext };
 }(typeof window !== 'undefined' ? window : globalThis));

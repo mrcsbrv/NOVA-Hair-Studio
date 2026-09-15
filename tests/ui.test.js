@@ -7,8 +7,11 @@ load("tests/dom-lite.js");
 load("data.js");
 load("salon-time.js");
 load("booking-core.js");
-load("supabase-config.js");
 load("supabase-repository.js");
+// Esta suite prueba la demo local, independientemente de la configuración real.
+// Nunca carga credenciales ni necesita el CDN o una conexión con Supabase.
+const createLocalTestRepository = NovaStorage.createRepository;
+NovaStorage.createRepository = options => createLocalTestRepository({ ...options, url: "", publishableKey: "" });
 load("script.js");
 drainMicrotasks();
 

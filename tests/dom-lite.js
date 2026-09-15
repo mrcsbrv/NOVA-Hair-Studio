@@ -174,7 +174,7 @@
   }
 
   const document = new LiteElement("document");
-  parse(readFile("index.html"), document);
+  parse(readFile(global.NOVA_TEST_HTML || "index.html"), document);
   document.getElementById = id => document.querySelector("#" + id);
   document.createElement = tag => new LiteElement(tag);
   document.documentElement = document.querySelector("html");
@@ -194,6 +194,7 @@
   global.CSS = { escape: value => value };
   global.requestAnimationFrame = callback => callback();
   const intervals = new Map();
+  const timeouts = new Map();
   let timerId = 0;
   global.setInterval = (callback, delay) => {
     const id = ++timerId;
@@ -201,10 +202,11 @@
     return id;
   };
   global.clearInterval = id => intervals.delete(id);
-  global.setTimeout = () => ++timerId;
-  global.clearTimeout = () => {};
+  global.setTimeout = (callback, delay) => { const id = ++timerId; timeouts.set(id, { callback, delay }); return id; };
+  global.clearTimeout = id => timeouts.delete(id);
   // El reloj solo avanza explícitamente en las pruebas; no añade esperas reales.
   global.NovaTestEnvironment = {
+    runTimeouts: delay => [...timeouts.entries()].filter(([, timer]) => timer.delay === delay).forEach(([id, timer]) => { timeouts.delete(id); timer.callback(); }),
     countIntervals: delay => [...intervals.values()].filter(timer => timer.delay === delay).length,
     tickIntervals: delay => [...intervals.values()].filter(timer => timer.delay === delay).forEach(timer => timer.callback()),
     setReducedMotion: matches => { media.matches = matches; media.dispatchEvent(new LiteEvent("change", { matches })); }

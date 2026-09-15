@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#F4F4F2">
+    <meta name="robots" content="noindex, nofollow">
+    <meta name="description" content="Acceso privado a la agenda de NOVA Hair Studio.">
+    <title>Panel de gestión · NOVA Hair Studio</title>
+    <link rel="stylesheet" href="admin.css">
+  </head>
+  <body class="admin-page">
+    <a class="skip-link" href="#admin-content">Saltar al contenido</a>
+    <main id="admin-content" class="admin-container" tabindex="-1">
+      <!-- El acceso a datos lo verifica Supabase; estos estados solo organizan la interfaz. -->
+      <section id="auth-screen" class="auth-screen" aria-labelledby="auth-title">
+        <div class="auth-card">
+          <a class="brand" href="index.html" aria-label="Ir a la web de NOVA Hair Studio">
+            <span class="brand-name">NOVA<span class="brand-dot">.</span></span>
+            <span class="brand-subtitle">HAIR STUDIO</span>
+          </a>
+          <div class="auth-heading">
+            <p class="eyebrow">ACCESO PRIVADO</p>
+            <h1 id="auth-title">Un buen día empieza<br>con todo en orden.</h1>
+            <p>Entra en la agenda para gestionar las citas del estudio.</p>
+          </div>
+          <p id="auth-status" class="feedback" role="status" aria-live="polite">Comprobando sesión…</p>
+          <form id="login-form" class="login-form" novalidate hidden>
+            <div class="form-field">
+              <label for="login-email">Email</label>
+              <input id="login-email" name="email" type="email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" required aria-describedby="login-email-error">
+              <p id="login-email-error" class="field-error"></p>
+            </div>
+            <div class="form-field">
+              <label for="login-password">Contraseña</label>
+              <input id="login-password" name="password" type="password" autocomplete="current-password" required aria-describedby="login-password-error">
+              <p id="login-password-error" class="field-error"></p>
+            </div>
+            <button id="login-submit" class="btn btn-primary" type="submit">Iniciar sesión <span aria-hidden="true">↗</span></button>
+          </form>
+          <p id="login-feedback" class="feedback error-feedback" role="alert"></p>
+          <button id="auth-retry" class="btn btn-secondary" type="button" hidden>Volver a comprobar</button>
+          <p class="auth-footnote">Solo para cuentas autorizadas de NOVA Hair Studio.</p>
+          <a class="back-link" href="index.html"><span aria-hidden="true">←</span> Volver a la web</a>
+        </div>
+      </section>
+
+      <section id="dashboard" class="dashboard" aria-labelledby="dashboard-heading" hidden>
+        <header class="admin-header">
+          <a class="brand" href="index.html" aria-label="Ir a la web de NOVA Hair Studio">
+            <span class="brand-name">NOVA<span class="brand-dot">.</span></span>
+            <span class="brand-subtitle">HAIR STUDIO</span>
+          </a>
+          <span class="header-caption">AGENDA DEL ESTUDIO</span>
+          <button id="logout-button" class="btn btn-secondary btn-small" type="button">Cerrar sesión</button>
+        </header>
+        <div class="dashboard-intro">
+          <div>
+            <p class="eyebrow">NOVA HAIR STUDIO</p>
+            <h1 id="dashboard-heading" tabindex="-1">Panel de gestión</h1>
+            <p>Tu equipo, sus citas y el tiempo para cuidar cada detalle.</p>
+          </div>
+          <p class="timezone-note"><span aria-hidden="true">◷</span> Horarios de Madrid<br><span>Europe/Madrid</span></p>
+        </div>
+
+        <div class="stats-grid" role="group" aria-label="Resumen de citas">
+          <article class="stat-card"><p>Citas de hoy</p><strong id="stats-today">—</strong><span>Confirmadas para hoy</span></article>
+          <article class="stat-card"><p>Próximas citas</p><strong id="stats-upcoming">—</strong><span>Por venir al estudio</span></article>
+          <article class="stat-card"><p>Citas confirmadas</p><strong id="stats-confirmed">—</strong><span>En toda la agenda</span></article>
+          <article class="stat-card stat-card-muted"><p>Citas canceladas</p><strong id="stats-cancelled">—</strong><span>Conservadas en el historial</span></article>
+        </div>
+
+        <nav class="admin-nav" aria-label="Secciones del panel">
+          <button type="button" data-admin-tab="agenda" aria-pressed="true" aria-controls="agenda-view">Agenda</button>
+          <button type="button" data-admin-tab="phone" aria-pressed="false" aria-controls="phone-view">Nueva cita telefónica</button>
+          <button type="button" data-admin-tab="history" aria-pressed="false" aria-controls="agenda-view">Historial / canceladas</button>
+        </nav>
+
+        <section id="agenda-view" class="admin-view" aria-labelledby="agenda-title">
+          <div class="view-heading">
+            <div><p class="eyebrow">CADA CITA, EN SU SITIO</p><h2 id="agenda-title">Agenda</h2></div>
+            <button id="refresh-agenda" class="btn btn-secondary btn-small" type="button">Actualizar agenda <span aria-hidden="true">↻</span></button>
+          </div>
+          <div class="agenda-filters">
+            <div class="form-field">
+              <label for="agenda-filter">Ver citas</label>
+              <select id="agenda-filter" name="agenda-filter">
+                <option value="upcoming" selected>Próximas</option>
+                <option value="today">Hoy</option>
+                <option value="all">Todas</option>
+                <option value="cancelled">Canceladas</option>
+              </select>
+            </div>
+            <div class="form-field">
+              <label for="professional-filter">Profesional</label>
+              <select id="professional-filter" name="professional-filter"><option value="any">Todo el equipo</option></select>
+            </div>
+            <p class="filter-note">Citas ordenadas por fecha y hora.</p>
+          </div>
+          <p id="agenda-feedback" class="feedback" role="status" aria-live="polite" aria-atomic="true"></p>
+          <div id="agenda-list" class="agenda-list"></div>
+          <p id="agenda-empty" class="empty-state" hidden>No hay citas próximas.</p>
+        </section>
+
+        <section id="phone-view" class="admin-view" aria-labelledby="phone-title" hidden>
+          <div class="view-heading">
+            <div><p class="eyebrow">UN HUECO PARA QUIEN LLAMA</p><h2 id="phone-title">Nueva cita telefónica</h2></div>
+          </div>
+          <div class="phone-layout">
+            <form id="phone-form" class="phone-form" novalidate>
+              <fieldset>
+                <legend>El servicio y el horario</legend>
+                <div class="form-grid">
+                  <div class="form-field form-field-wide">
+                    <label for="phone-service">Servicio</label>
+                    <select id="phone-service" name="service" required aria-describedby="phone-service-error"><option value="">Elige un servicio</option></select>
+                    <p id="phone-service-error" class="field-error"></p>
+                  </div>
+                  <div class="form-field form-field-wide">
+                    <label for="phone-professional">Profesional</label>
+                    <select id="phone-professional" name="professional" required aria-describedby="phone-professional-error" disabled><option value="">Elige primero un servicio</option></select>
+                    <p id="phone-professional-error" class="field-error"></p>
+                  </div>
+                  <div class="form-field">
+                    <label for="phone-date">Fecha</label>
+                    <input id="phone-date" name="date" type="date" required aria-describedby="phone-date-error">
+                    <p id="phone-date-error" class="field-error"></p>
+                  </div>
+                  <div class="form-field">
+                    <label for="phone-time">Hora</label>
+                    <select id="phone-time" name="time" required aria-describedby="phone-time-error phone-availability" disabled><option value="">Elige servicio y fecha</option></select>
+                    <p id="phone-time-error" class="field-error"></p>
+                  </div>
+                </div>
+                <p id="phone-availability" class="field-hint" role="status" aria-live="polite">Selecciona servicio, profesional y fecha para consultar horas disponibles.</p>
+                <button id="refresh-phone-hours" class="btn btn-secondary btn-small" type="button">Actualizar horas <span aria-hidden="true">↻</span></button>
+              </fieldset>
+              <fieldset>
+                <legend>Los datos del cliente</legend>
+                <div class="form-grid">
+                  <div class="form-field form-field-wide">
+                    <label for="phone-name">Nombre</label>
+                    <input id="phone-name" name="customer-name" type="text" autocomplete="off" maxlength="80" required aria-describedby="phone-name-error">
+                    <p id="phone-name-error" class="field-error"></p>
+                  </div>
+                  <div class="form-field">
+                    <label for="phone-phone">Teléfono</label>
+                    <input id="phone-phone" name="customer-phone" type="tel" autocomplete="off" inputmode="tel" maxlength="25" required aria-describedby="phone-phone-error">
+                    <p id="phone-phone-error" class="field-error"></p>
+                  </div>
+                  <div class="form-field">
+                    <label for="phone-email">Email</label>
+                    <input id="phone-email" name="customer-email" type="email" autocomplete="off" inputmode="email" autocapitalize="none" spellcheck="false" maxlength="254" required aria-describedby="phone-email-error">
+                    <p id="phone-email-error" class="field-error"></p>
+                  </div>
+                </div>
+              </fieldset>
+              <p class="field-hint">Todos los campos son obligatorios. La cita se guardará al pulsar «Crear cita telefónica».</p>
+              <button id="phone-submit" class="btn btn-primary" type="submit">Crear cita telefónica <span aria-hidden="true">↗</span></button>
+              <p id="phone-feedback" class="feedback" role="status" aria-live="polite" aria-atomic="true"></p>
+            </form>
+            <aside class="phone-aside" aria-labelledby="phone-help-title">
+              <span class="aside-mark" aria-hidden="true">✳</span>
+              <h3 id="phone-help-title">Una agenda compartida.</h3>
+              <p>Las citas telefónicas ocupan el mismo horario que las reservas de la web.</p>
+              <p>Solo verás huecos con tiempo suficiente para realizar el servicio completo.</p>
+              <dl class="hours-list">
+                <div><dt>Lunes a viernes</dt><dd>09:00–20:00</dd></div>
+                <div><dt>Sábado</dt><dd>09:00–14:00</dd></div>
+                <div><dt>Domingo</dt><dd>Cerrado</dd></div>
+              </dl>
+              <p class="field-hint">En esta fase no se envían correos ni mensajes automáticamente.</p>
+            </aside>
+          </div>
+        </section>
+      </section>
+      <p id="admin-notice" class="feedback admin-notice" role="status" aria-live="polite" aria-atomic="true"></p>
+      <noscript><p class="empty-state">Activa JavaScript en tu navegador para iniciar sesión y gestionar la agenda.</p></noscript>
+    </main>
+    <footer class="admin-footer"><p>NOVA Hair Studio · Peluquería ficticia</p><p>Acceso reservado a personal autorizado.</p></footer>
+
+    <dialog id="cancel-dialog" class="cancel-dialog" aria-labelledby="cancel-title" aria-describedby="cancel-description">
+      <p class="eyebrow">CANCELACIÓN DE CITA</p>
+      <h2 id="cancel-title">¿Cancelar esta cita?</h2>
+      <p id="cancel-description">La cita pasará al historial de canceladas y su horario volverá a estar disponible.</p>
+      <p class="field-hint">La reserva se conservará en la agenda. No se enviará un aviso automático al cliente.</p>
+      <p id="cancel-feedback" class="feedback error-feedback" role="alert"></p>
+      <div class="dialog-actions">
+        <button id="cancel-dismiss" class="btn btn-secondary" type="button" autofocus>Mantener cita</button>
+        <button id="cancel-confirm" class="btn btn-danger" type="button">Sí, cancelar cita</button>
+      </div>
+    </dialog>
+
+    <script src="data.js"></script>
+    <script src="salon-time.js"></script>
+    <script src="booking-core.js"></script>
+    <script src="supabase-config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-repository.js"></script>
+    <script src="admin-repository.js"></script>
+    <script src="admin.js"></script>
+  </body>
+</html>

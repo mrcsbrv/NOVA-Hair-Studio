@@ -20,7 +20,7 @@ Sustituye los textos entre comillas por el **Project URL** HTTPS de tu proyecto 
 | Ambos valores válidos | Agenda compartida de Supabase. Se espera la disponibilidad del servidor antes de permitir reservar. |
 | Supabase o su CDN no responde con configuración activa | Error visible y posibilidad de actualizar disponibilidad; nunca se guarda una reserva local como alternativa. |
 
-El cliente se crea una sola vez, con persistencia de sesión, detección de sesión en URL, refresco de tokens y reintentos automáticos de consultas desactivados. Se carga supabase-js v2 desde el [CDN compatible indicado por Supabase](https://supabase.com/docs/reference/javascript/installing). No se instala nada en el proyecto.
+El cliente de la **web pública** se crea una sola vez, con persistencia de sesión, detección de sesión en URL, refresco de tokens y reintentos automáticos de consultas desactivados. El panel privado utiliza la misma configuración con sesión administrada por Auth, como se explica abajo. Se carga supabase-js v2 desde el [CDN compatible indicado por Supabase](https://supabase.com/docs/reference/javascript/installing). No se instala nada en el proyecto.
 
 ## Correspondencia de servicios y profesionales
 
@@ -91,9 +91,62 @@ Los datos de la propia confirmación permanecen en memoria de la página. En mod
 
 Con ambos valores sin configurar, las citas de ejemplo se generan para los tres próximos días laborables de Madrid. Se utiliza la clave `nova-hair-studio.bookings.v1`. Las reservas sobreviven a la recarga dentro del mismo navegador/origen. Desde «Herramientas de demostración» puedes añadir citas telefónicas, cancelar y restaurar los ejemplos.
 
-Con Supabase activo esas herramientas están ocultas y sus operaciones rechazan cualquier intento desde el repositorio público. La cancelación y la gestión telefónica remotas se incorporarán al futuro panel privado con autenticación.
+Con Supabase activo esas herramientas están ocultas y sus operaciones rechazan cualquier intento desde el repositorio público. La cancelación y la gestión telefónica remotas están disponibles en `admin.html`, después de autenticar una cuenta administradora.
 
 El salón, las fotografías, reseñas, dirección y contactos siguen siendo ficticios. No hay correo real, pagos, mapa real ni cuentas de clientes. `sendConfirmationEmail(booking)` continúa desacoplada del guardado y no envía nada. La confirmación no se recupera tras recargar porque la web pública no consulta reservas personales; la ocupación del intervalo sí se conserva en Supabase.
+
+## Panel privado de administración
+
+Abre **`admin.html`** en el navegador desde la carpeta del proyecto. En GitHub Pages se abre añadiendo `/admin.html` a la dirección del proyecto, por ejemplo `https://TU_USUARIO.github.io/NOVA-Hair-Studio/admin.html`. No hay enlace destacado desde la web pública y no se necesita compilación. La apertura directa necesita acceso al CDN y a Supabase; si el navegador restringe la persistencia de sesión en `file://`, utiliza la URL HTTPS de GitHub Pages.
+
+El panel reutiliza `supabase-config.js`, el SDK y las correspondencias de `data.js`. **No tiene modo local ni crea administradores**. Deben existir el usuario de Auth, `nova_is_admin()`, las tablas y las políticas ya configuradas. No ejecuta SQL ni altera esos permisos.
+
+### Acceso, sesión y privacidad
+
+1. Al abrir se muestra «Comprobando sesión…» y se llama a `auth.getSession()`. Sin sesión aparece únicamente el acceso.
+2. Introduce el email y la contraseña de tu administrador existente. Se utiliza [`auth.signInWithPassword()`](https://supabase.com/docs/reference/javascript/auth-signinwithpassword); una contraseña incorrecta muestra un error y limpia ese campo.
+3. Antes de mostrar el panel o consultar reservas se exige que `rpc('nova_is_admin')` devuelva el booleano `true`. Una cuenta sin autorización se desconecta y ve «Esta cuenta no está autorizada para administrar NOVA.».
+4. «Cerrar sesión» solicita a Auth el cierre en este navegador y borra inmediatamente las reservas del estado y del DOM, incluido cualquier formulario o diálogo. Las consultas antiguas no pueden volver a mostrarlas. Si falla el cierre, hay un botón de reintento y una renovación del token no reabre el panel automáticamente.
+
+La sesión la persiste **el SDK de Supabase Auth**, con la clave de almacenamiento independiente `nova-admin-auth-v1`; también gestiona el refresco del token. No hay almacenamiento manual de contraseñas o tokens, ni se guardan reservas o datos de clientes en localStorage. El cliente público no carga esta sesión. Los observadores de Auth son síncronos y difieren la comprobación de red para [evitar bloqueos del SDK](https://supabase.com/docs/guides/troubleshooting/why-is-my-supabase-api-call-not-returning-PGzXw0).
+
+Cada operación privada vuelve a comprobar sesión y permiso en el servidor. RLS sigue siendo la protección real: conocer la URL o alterar el HTML no concede permisos sobre las tablas. Los rechazos de autorización retiran los datos del panel; los errores mostrados no incluyen detalles privados del servidor. No se imprimen reservas o sesiones en consola.
+
+### Agenda y comprobación de una cita telefónica
+
+La vista inicial es **Próximas**. Los filtros **Hoy**, **Todas**, **Canceladas** y profesional permiten revisar el resto. «Historial / canceladas» abre las canceladas; «Todas» incluye también citas pasadas. El resumen cuenta las citas de toda la agenda, con las de hoy y próximas limitadas a confirmadas. Las fechas, horas, límites del día y disponibilidad utilizan **Europe/Madrid**, con independencia de la zona del dispositivo.
+
+1. Abre «Nueva cita telefónica». Elige un servicio: si solo tiene un profesional, se asigna automáticamente; si tiene varios, puedes elegir entre los compatibles.
+2. Elige un día laborable futuro y una hora. Solo se ofrecen intervalos donde cabe el servicio completo, dentro de 09:00–20:00 de lunes a viernes o 09:00–14:00 el sábado, con comienzos cada 30 minutos. Los domingos y el pasado no admiten citas. «Actualizar horas» permite repetir la consulta.
+3. Introduce datos de cliente ficticios para la prueba y pulsa «Crear cita telefónica». Elegir los campos no inserta nada. Se releen las reservas y se comprueba otra vez toda la duración antes de enviar.
+4. Tras «Cita telefónica creada.», el formulario se limpia y la agenda se actualiza. Abre la web pública, selecciona el mismo servicio, profesional y fecha, y vuelve a consultar: ese intervalo ya no debe ofrecerse. También hay refresco público cada 30 segundos mientras la página está visible.
+5. Para comprobar un conflicto, prepara el mismo horario en otra pestaña antes de guardarlo. Si el servidor rechaza el segundo intento, se muestra «Ese horario acaba de dejar de estar disponible.»; se actualizan las horas y se conservan los datos del formulario.
+
+La lectura privada solicita exclusivamente:
+
+```text
+id, service_id, professional_id, start_at, end_at,
+customer_name, customer_phone, customer_email, source, status, created_at
+```
+
+La creación telefónica envía únicamente:
+
+```text
+service_id, professional_id, start_at,
+customer_name, customer_phone, customer_email, source: 'phone'
+```
+
+No envía `end_at`, `id`, `created_at` ni `status`, ni añade una lectura al INSERT. El servidor calcula la duración definitiva y valida la operación. Una respuesta perdida puede dejar el resultado incierto: se bloquean nuevas creaciones en esa página hasta recargar. Comprueba antes la agenda para evitar duplicar una cita que sí se haya guardado. Un fallo de refresco posterior a una escritura confirmada no transforma el éxito en un fallo de creación.
+
+### Comprobar una cancelación
+
+1. En una cita confirmada pulsa «Cancelar cita». El diálogo identifica al cliente, servicio, fecha y hora. «Mantener cita» cierra el diálogo sin modificar nada.
+2. «Sí, cancelar cita» realiza `update({ status: 'cancelled' }).eq('id', id)` y comprueba que se actualizó la fila. **No elimina registros ni permite reactivarlos**.
+3. Tras «Cita cancelada.», la reserva aparece en el filtro «Canceladas». Vuelve a consultar esa fecha en la web pública: el intervalo estará libre si ninguna otra cita ocupa ese tiempo.
+
+«Llamar» y «Enviar email» abren `tel:` y `mailto:`. No se envían avisos automáticamente al crear o cancelar.
+
+La agenda se refresca al pedirlo, después de crear/cancelar, al volver a la pestaña y cada 30 segundos mientras está visible. Las lecturas privadas están paginadas y rechazan resultados incompletos o inconsistentes; esta primera versión admite hasta 20.000 reservas en la consulta completa. No utiliza Realtime ni añade vacaciones, bloqueos, roles, pagos, SMS o correo automático.
 
 ## Archivos y arquitectura
 
@@ -105,6 +158,9 @@ El salón, las fotografías, reseñas, dirección y contactos siguen siendo fict
 - `supabase-config.js`: las dos constantes públicas editables.
 - `supabase-repository.js`: selección de modo, cliente único y adaptador remoto.
 - `script.js`: interfaz compartida por ambos repositorios, estados de red y refrescos.
+- `admin.html` y `admin.css`: acceso y panel responsive independientes de la página pública.
+- `admin.js`: interfaz privada, filtros, formulario, confirmaciones y descarte de respuestas tras cerrar sesión.
+- `admin-repository.js`: operaciones Auth, comprobación de administrador, agenda privada y mutaciones autorizadas. Reutiliza `NovaStorage.createAdminContext()` y el motor existente.
 - `tests/`: pruebas sin dependencias ni acceso a la base de datos real.
 
 La interfaz utiliza `NovaStorage.createRepository()`:
@@ -135,7 +191,12 @@ Desde la raíz del proyecto, en macOS:
 /System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc tests/supabase.test.js
 /System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc tests/ui.test.js
 /System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc tests/remote-ui.test.js
+/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc tests/admin-repository.test.js
+/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc tests/admin-ui.test.js
 python3 tests/check_structure.py
+python3 tests/check_admin_structure.py
 ```
 
-Las pruebas cubren duración real, solapamientos, guardado y cancelación locales, permisos de columnas del adaptador, aislamiento de almacenamiento, estados asíncronos, conflictos, errores, paginación y cambios horarios. Las pruebas de interfaz utilizan un DOM mínimo y repositorios controlados: no sustituyen una comprobación en navegador ni validan las políticas del proyecto Supabase real.
+Las pruebas cubren duración real, solapamientos, guardado y cancelación locales, permisos de columnas del adaptador, aislamiento de almacenamiento, estados asíncronos, conflictos, errores, paginación y cambios horarios. El panel añade pruebas de login, denegación de permisos, RPC antes de leer datos privados, logout, renovación de sesión, respuestas tardías, recuperación de navegación, filtros, payload telefónico, cancelación y liberación de disponibilidad pública. Los fixtures son independientes de la configuración real del proyecto.
+
+Las pruebas de interfaz utilizan un DOM mínimo y repositorios controlados: no sustituyen una comprobación visual/táctil en navegador ni validan Auth, RLS o reservas del proyecto Supabase real. Para comprobarlos, utiliza los pasos manuales anteriores con la cuenta administradora ya creada. Las suites no acceden a esa cuenta ni insertan reservas en la base de datos real.
